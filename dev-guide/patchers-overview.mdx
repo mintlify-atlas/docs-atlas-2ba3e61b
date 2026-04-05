@@ -1,0 +1,105 @@
+---
+title: "Preloader patchers"
+description: "Preloader patchers run before any game assemblies are loaded, letting you rewrite IL bytecode using Mono.Cecil before the CLR ever sees it."
+---
+
+<Warning>
+  Preloader patchers are an advanced feature. They run before the Unity engine and game assemblies are available, so you cannot call any game or Unity APIs. Mistakes can prevent the game from launching entirely. If your goal can be accomplished with a regular BepInEx plugin and Harmony, prefer that approach instead.
+</Warning>
+
+## What is a preloader patcher?
+
+A preloader patcher is a special BepInEx plugin that runs during the **preloader phase**, before any game assembly is loaded into the CLR. At this stage, BepInEx reads each managed assembly from disk as raw bytes, passes them through every registered patcher, then loads the modified bytes into the runtime.
+
+Because patchers operate at the IL level through [Mono.Cecil](https://github.com/jbevain/cecil), they can make structural changes that are impossible after an assembly is loaded — things like:
+
+- Adding or removing interfaces on a class
+- Changing field or method accessibility (`private` → `public`)
+- Inserting new methods, fields, or types
+- Rewriting method bodies at the instruction level
+
+## How patchers differ from regular plugins
+
+| | Regular plugin | Preloader patcher |
+|---|---|---|
+| Loaded | After game assemblies | Before game assemblies |
+| Base class | `BaseUnityPlugin` | `BasePatcher` |
+| Location | `BepInEx/plugins/` | `BepInEx/patchers/` |
+| Unity API available | Yes | No |
+| Game types available | Yes | No (Cecil `TypeDefinition` only) |
+| Use Harmony | Yes | Not applicable |
+| Modify IL structure | No | Yes |
+
+## The patcher pipeline
+
+BepInEx runs all patchers in three ordered phases:
+
+1. **`Initialize()`** — Called once on every patcher, before any patch methods run. Use this to inspect `Context.AvailableAssemblies`, add assemblies to the patching queue, or perform any setup that requires cross-patcher coordination.
+
+2. **Patch methods** — Each method on your patcher class that carries a `[TargetAssembly]` or `[TargetType]` attribute is invoked for its matching assembly or type. This is where you apply your Cecil transformations.
+
+3. **`Finalizer()`** — Called once on every patcher after all patch methods from all patchers have run. Use this for cleanup or post-patch validation.
+
+## Required metadata: `[PatcherPluginInfo]`
+
+Every patcher class must be decorated with `[PatcherPluginInfo]`. BepInEx uses this attribute to discover and load the patcher; classes without it are silently skipped.
+
+```csharp
+[PatcherPluginInfo("com.example.mypatcher", "My Patcher", "1.0.0")]
+public class MyPatcher : BasePatcher { }
+```
+
+The three required arguments are:
+
+| Parameter | Description |
+|-----------|-------------|
+| `GUID` | Unique reverse-domain identifier. Must match `[a-zA-Z0-9._\-]+`. Should not change between versions. |
+| `Name` | Human-readable display name shown in logs. |
+| `Version` | Semantic version string (e.g. `"1.0.0"`). |
+
+## `BasePatcher` properties
+
+When you extend `BasePatcher`, the following properties are available in all lifecycle methods and patch methods:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `Log` | `ManualLogSource` | A log source scoped to this patcher's name. Use `Log.LogInfo(...)`, `Log.LogWarning(...)`, etc. |
+| `Config` | `ConfigFile` | A `ConfigFile` backed by `BepInEx/config/<GUID>.cfg`. Bind configuration entries just as you would in a regular plugin. |
+| `Info` | `PatcherPluginInfoAttribute` | The resolved metadata from `[PatcherPluginInfo]` — exposes `GUID`, `Name`, and `Version`. |
+| `Context` | `PatcherContext` | Shared context provided by `AssemblyPatcher`. Gives access to all assemblies queued for patching and the full list of loaded patchers. |
+
+## `PatcherContext`
+
+`Context` is the shared state that all patchers read from and write to. It is set on your instance before `Initialize()` is called.
+
+| Member | Type | Description |
+|--------|------|-------------|
+| `AvailableAssemblies` | `Dictionary<string, AssemblyDefinition>` | All managed assemblies that have been staged for patching, keyed by filename (e.g. `"Assembly-CSharp.dll"`). You can add entries here in `Initialize()` to stage additional assemblies. |
+| `AvailableAssembliesPaths` | `Dictionary<string, string>` | Maps each filename key to its full path on disk. |
+| `LoadedAssemblies` | `Dictionary<string, Assembly>` | Populated after `PatchAndLoad` completes — the runtime `Assembly` objects that were loaded. Not available during patch methods. |
+| `PatcherPlugins` | `List<BasePatcher>` | All patcher instances registered with the current `AssemblyPatcher`. |
+| `PatchDefinitions` | `List<PatchDefinition>` | All individual patch methods discovered across all patchers. |
+
+## Where to place patcher DLLs
+
+Drop your compiled patcher DLL into:
+
+```
+<game root>/BepInEx/patchers/
+```
+
+BepInEx scans this directory at startup and loads every managed assembly that contains at least one valid `BasePatcher` subclass with a `[PatcherPluginInfo]` attribute.
+
+## Key use cases
+
+**Adding an interface to a class** — useful for making game types implement a shared interface so you can cast to it from a plugin without reflection.
+
+**Making members accessible** — change a `private` or `internal` field to `public` so plugins can read or write it directly.
+
+**Inserting hooks at the IL level** — inject calls to static methods at the very start or end of a method body, before any Harmony patching occurs.
+
+**Adding new fields or methods** — inject new state or behaviour into existing types before the game assembles its object graph.
+
+<Note>
+  For reading or modifying method bodies, use `Mono.Cecil.Cil.ILProcessor`. Cecil's [official documentation](https://github.com/jbevain/cecil/wiki) is the authoritative reference for working with IL instructions.
+</Note>

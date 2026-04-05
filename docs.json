@@ -1,122 +1,91 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "BepInEx",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#242b2c",
+    "light": "#6a6a6d",
+    "dark": "#ebeaea"
   },
-  "favicon": "/favicon.svg",
+  "favicon": "https://media.brand.dev/dd53df08-618e-4744-857f-50d25fd50d90.png",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/BepInEx/BepInEx"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/BepInEx/BepInEx"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "User Guide",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Getting Started",
             "pages": [
               "index",
-              "quickstart",
-              "development"
+              "user-guide/introduction",
+              "user-guide/installation",
+              "user-guide/configuration"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Guides",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
-            ]
-          },
-          {
-            "group": "Writing content",
-            "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
-            ]
-          },
-          {
-            "group": "AI tools",
-            "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "user-guide/troubleshooting",
+              "user-guide/platform-compatibility"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "Developer Guide",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Plugin Development",
             "pages": [
-              "api-reference/introduction"
+              "dev-guide/plugin-quickstart",
+              "dev-guide/plugin-metadata",
+              "dev-guide/plugin-dependencies"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Configuration API",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "dev-guide/configuration-overview",
+              "dev-guide/config-file",
+              "dev-guide/config-entry"
+            ]
+          },
+          {
+            "group": "Logging API",
+            "pages": [
+              "dev-guide/logging-overview",
+              "dev-guide/log-sources",
+              "dev-guide/log-listeners"
+            ]
+          },
+          {
+            "group": "Preloader Patchers",
+            "pages": [
+              "dev-guide/patchers-overview",
+              "dev-guide/writing-a-patcher"
+            ]
+          },
+          {
+            "group": "Advanced Topics",
+            "pages": [
+              "dev-guide/il2cpp-plugins",
+              "dev-guide/harmony-patching",
+              "dev-guide/chainloader"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

@@ -1,0 +1,68 @@
+---
+title: "Introduction"
+description: "BepInEx is a plugin and modding framework for Unity Mono, Unity IL2CPP, and .NET/XNA games. Learn what it is, how it works, and what gets installed."
+---
+
+BepInEx (Bepis Injector Extensible) is a plugin and modding framework that lets you load custom code into Unity and .NET games without modifying the game itself. It handles the hard parts — injecting into the process at startup, patching assemblies before they load, and managing plugin lifecycle — so mod authors can focus on writing plugins.
+
+## Key components
+
+<CardGroup cols={2}>
+  <Card title="Doorstop" icon="door-open">
+    [UnityDoorstop](https://github.com/NeighTools/UnityDoorstop) intercepts the game's managed runtime before any game code runs. On Windows it works as a `winhttp.dll` proxy; on Linux and macOS it uses a `LD_PRELOAD`/`DYLD_INSERT_LIBRARIES` hook. No game file modifications are needed.
+  </Card>
+  <Card title="Preloader" icon="bolt">
+    The preloader runs immediately after Doorstop hands off control. It discovers patcher plugins from `BepInEx/patchers/`, applies Cecil-based IL patches to game assemblies in memory, then hands the patched assemblies off to the runtime.
+  </Card>
+  <Card title="Chainloader" icon="link">
+    The chainloader initialises after the game's managed runtime is ready. It scans `BepInEx/plugins/` for assemblies containing types decorated with `[BepInPlugin]`, resolves their dependencies, sorts them topologically, and loads them in order.
+  </Card>
+  <Card title="Plugin system" icon="puzzle-piece">
+    Each plugin is a class that inherits from the runtime-specific base plugin type and carries a `[BepInPlugin(GUID, Name, Version)]` attribute. Plugins can declare hard or soft dependencies on other plugins by GUID and version range.
+  </Card>
+</CardGroup>
+
+## Supported runtimes and platforms
+
+BepInEx targets three runtime families. Stable releases are currently available for **Unity Mono** only; IL2CPP and .NET/XNA support is in active development.
+
+| Runtime      | Windows | macOS | Linux | ARM |
+|--------------|---------|-------|-------|-----|
+| Unity Mono   | ✔       | ✔     | ✔     | N/A |
+| Unity IL2CPP | ✔       | ✗     | ✔     | ✗   |
+| .NET / XNA   | ✔       | Mono  | Mono  | N/A |
+
+<Note>
+  "Mono" in the macOS and Linux columns for .NET/XNA means those platforms require the Mono runtime rather than the native .NET runtime.
+</Note>
+
+## Directory structure
+
+After installation and a first game launch, BepInEx creates the following layout inside the game's root folder:
+
+```text
+<game root>/
+├── BepInEx/
+│   ├── core/          # BepInEx core DLLs (do not modify)
+│   ├── plugins/       # Drop plugin DLLs here
+│   ├── patchers/      # Preloader patcher plugins
+│   ├── config/        # Per-plugin config files (.cfg)
+│   │   └── BepInEx.cfg
+│   └── cache/         # TypeLoader discovery cache (auto-generated)
+├── doorstop_config.ini
+└── winhttp.dll        # Windows only — Doorstop proxy DLL
+```
+
+| Folder / File         | Purpose |
+|-----------------------|---------|
+| `core/`               | BepInEx runtime assemblies. Managed by BepInEx; do not add or remove files here. |
+| `plugins/`            | Plugin DLLs loaded by the chainloader at game startup. |
+| `patchers/`           | Patcher plugin DLLs that modify assemblies before they are loaded into the CLR. |
+| `config/`             | Configuration files. `BepInEx.cfg` controls BepInEx itself; each plugin may create its own `<GUID>.cfg` here. |
+| `cache/`              | Binary cache of assembly metadata used to speed up plugin discovery. Auto-generated and safe to delete. |
+| `doorstop_config.ini` | Doorstop configuration, including the path to the preloader entry-point DLL. |
+| `winhttp.dll`         | Windows Doorstop proxy. The OS loads this instead of the real `winhttp.dll`, giving BepInEx control before any game code runs. |
+
+## Next steps
+
+Ready to install? See the [installation guide](/user-guide/installation).

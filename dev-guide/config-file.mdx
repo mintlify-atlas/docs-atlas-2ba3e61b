@@ -1,0 +1,310 @@
+---
+title: "ConfigFile"
+description: "ConfigFile is the central class for reading and writing a BepInEx plugin's .cfg file. It manages serialization, persistence, and change notifications for all settings it owns."
+---
+
+`ConfigFile` implements `IDictionary<ConfigDefinition, ConfigEntryBase>` and is thread-safe for all public operations. In normal plugin development you access it through the `Config` property inherited from `BaseUnityPlugin` or `BasePlugin` rather than constructing one directly.
+
+## Constructors
+
+<ParamField path="configPath" type="string" required>
+  Full path to the `.cfg` file. The file and its parent directories are created automatically when needed.
+</ParamField>
+
+<ParamField path="saveOnInit" type="bool" required>
+  When `true`, the file is written immediately if it does not already exist. When `false`, the file is only written when a setting is saved or `Save()` is called.
+</ParamField>
+
+<ParamField path="ownerMetadata" type="BepInPlugin">
+  Optional. When provided, `Save()` prepends a header comment with the plugin name, version, and GUID. Pass `null` to omit the header.
+</ParamField>
+
+```csharp
+// Simple — no owner header in the saved file
+var cfg = new ConfigFile(Path.Combine(Paths.ConfigPath, "mymod.cfg"), saveOnInit: true);
+
+// With owner metadata — file gets a "created by plugin" header
+var cfg = new ConfigFile(
+    Path.Combine(Paths.ConfigPath, "mymod.cfg"),
+    saveOnInit: true,
+    ownerMetadata: Info.Metadata   // BepInPlugin attribute data
+);
+```
+
+## Static properties
+
+### `CoreConfig`
+
+<ResponseField name="CoreConfig" type="ConfigFile">
+  The global BepInEx configuration file located at `BepInEx/config/BepInEx.cfg`. This file holds framework-level settings and is initialized before any plugins load. It is not intended for plugin use.
+</ResponseField>
+
+## Instance properties
+
+### `ConfigFilePath`
+
+<ResponseField name="ConfigFilePath" type="string">
+  The absolute path to the `.cfg` file on disk. Set at construction time and never changes.
+</ResponseField>
+
+### `SaveOnConfigSet`
+
+<ResponseField name="SaveOnConfigSet" type="bool" default="true">
+  When `true` (the default), `Save()` is called automatically every time a setting's value changes. Set to `false` to batch updates and call `Save()` manually.
+</ResponseField>
+
+```csharp
+// Batch multiple writes into a single disk operation
+Config.SaveOnConfigSet = false;
+
+cfgSpeed.Value = 2.0f;
+cfgHealth.Value = 100;
+
+Config.SaveOnConfigSet = true;
+Config.Save();
+```
+
+### `GenerateSettingDescriptions`
+
+<ResponseField name="GenerateSettingDescriptions" type="bool" default="true">
+  When `true`, each setting in the saved file is preceded by comment lines describing its type, default value, and acceptable value range. Set to `false` to produce a minimal file with only the key-value lines.
+</ResponseField>
+
+### `Keys`
+
+<ResponseField name="Keys" type="ICollection<ConfigDefinition>">
+  A snapshot array of all `ConfigDefinition` keys registered in this file. Creates a new array on each access. Thread-safe.
+</ResponseField>
+
+### `Values`
+
+<ResponseField name="Values" type="ICollection<ConfigEntryBase>">
+  A snapshot array of all `ConfigEntryBase` entries registered in this file. Creates a new array on each access. Thread-safe.
+</ResponseField>
+
+```csharp
+// Iterate every setting in the file
+foreach (var entry in Config.Values)
+{
+    Logger.LogInfo($"{entry.Definition}: {entry.BoxedValue}");
+}
+```
+
+## Methods
+
+### `Bind<T>` — register a setting
+
+`Bind` is the primary method for declaring a config setting. If the setting already exists in the file (from a previous session), its persisted value is loaded. If it does not exist, the default value is used and the file is updated.
+
+Calling `Bind` twice with the same section and key returns the existing `ConfigEntry<T>` rather than throwing.
+
+**Overload 1 — string description**
+
+<ParamField path="section" type="string" required>
+  The section (group) that this setting belongs to. Sections become `[headers]` in the `.cfg` file. Case-sensitive. Cannot contain `=`, `\n`, `\t`, `\`, `"`, `'`, `[`, or `]`.
+</ParamField>
+
+<ParamField path="key" type="string" required>
+  The name of the setting within the section. Case-sensitive. The same character restrictions apply as for `section`.
+</ParamField>
+
+<ParamField path="defaultValue" type="T" required>
+  The value used when no persisted value exists. Must be a type supported by `TomlTypeConverter`.
+</ParamField>
+
+<ParamField path="description" type="string" required>
+  A plain-text description written as a comment above the key in the saved file.
+</ParamField>
+
+```csharp
+ConfigEntry<float> speed = Config.Bind(
+    "Movement",
+    "WalkSpeed",
+    5.0f,
+    "Player walking speed in units per second."
+);
+```
+
+**Overload 2 — `ConfigDescription`**
+
+<ParamField path="configDescription" type="ConfigDescription">
+  A `ConfigDescription` that wraps the text description and an optional `AcceptableValueBase` validator. Pass `null` to skip both.
+</ParamField>
+
+```csharp
+ConfigEntry<float> speed = Config.Bind(
+    "Movement",
+    "WalkSpeed",
+    5.0f,
+    new ConfigDescription(
+        "Player walking speed in units per second.",
+        new AcceptableValueRange<float>(0.1f, 20f)
+    )
+);
+```
+
+**Overload 3 — `ConfigDefinition`**
+
+<ParamField path="configDefinition" type="ConfigDefinition" required>
+  A pre-constructed `ConfigDefinition` that bundles section and key together. Useful when sharing definitions across code.
+</ParamField>
+
+```csharp
+var definition = new ConfigDefinition("Movement", "WalkSpeed");
+
+ConfigEntry<float> speed = Config.Bind(definition, 5.0f, new ConfigDescription(
+    "Player walking speed in units per second.",
+    new AcceptableValueRange<float>(0.1f, 20f)
+));
+```
+
+### `TryGetEntry<T>` — access an existing entry
+
+Returns an already-registered entry without creating a new one. Use this to read a setting that was bound elsewhere (for example, from a shared library or another class).
+
+<ParamField path="section" type="string" required>
+  Section of the setting to look up.
+</ParamField>
+
+<ParamField path="key" type="string" required>
+  Key of the setting to look up.
+</ParamField>
+
+<ParamField path="entry" type="ConfigEntry<T>">
+  Output parameter. Set to the matching entry when the method returns `true`, or `null` when it returns `false`.
+</ParamField>
+
+<ResponseField name="return" type="bool">
+  `true` if the entry was found; `false` if no entry with that section and key has been registered yet.
+</ResponseField>
+
+```csharp
+if (Config.TryGetEntry<float>("Movement", "WalkSpeed", out var speedEntry))
+{
+    Logger.LogInfo($"Walk speed is {speedEntry.Value}");
+}
+else
+{
+    Logger.LogWarning("WalkSpeed has not been bound yet.");
+}
+```
+
+There is also an overload that accepts a `ConfigDefinition` directly:
+
+```csharp
+var definition = new ConfigDefinition("Movement", "WalkSpeed");
+Config.TryGetEntry<float>(definition, out var speedEntry);
+```
+
+### `Save()` — write to disk
+
+Writes all registered entries and any orphaned entries (values in the file that have no matching `Bind` call) to `ConfigFilePath`. Creates the directory if it does not exist.
+
+```csharp
+Config.Save();
+```
+
+### `Reload()` — read from disk
+
+Re-reads the `.cfg` file and updates all registered entries. Any unsaved in-memory changes are discarded. After all entries are updated, `ConfigReloaded` is fired.
+
+```csharp
+Config.Reload();
+```
+
+<Note>
+`Reload` only updates entries that were previously registered with `Bind`. Values present in the file for which no `ConfigEntry` exists are kept as orphaned entries and written back verbatim on the next `Save`.
+</Note>
+
+## Indexer
+
+`ConfigFile` can be indexed by a `ConfigDefinition` or by a `(string section, string key)` pair to retrieve the untyped `ConfigEntryBase`:
+
+```csharp
+ConfigEntryBase entry = Config[new ConfigDefinition("Movement", "WalkSpeed")];
+
+// Shorthand with section and key strings
+ConfigEntryBase entry = Config["Movement", "WalkSpeed"];
+```
+
+## Events
+
+### `SettingChanged`
+
+Fired after any setting in the file has its value changed. The event argument provides access to the affected entry.
+
+```csharp
+Config.SettingChanged += (sender, args) =>
+{
+    Logger.LogInfo($"Setting changed: {args.ChangedSetting.Definition}");
+    Logger.LogInfo($"New value: {args.ChangedSetting.BoxedValue}");
+};
+```
+
+<ResponseField name="sender" type="object">
+  The object that triggered the change (typically the `ConfigEntry<T>` itself).
+</ResponseField>
+
+<ResponseField name="args.ChangedSetting" type="ConfigEntryBase">
+  The entry whose value was modified.
+</ResponseField>
+
+<Note>
+If `SaveOnConfigSet` is `true`, `Save()` is called before the `SettingChanged` event fires.
+</Note>
+
+### `ConfigReloaded`
+
+Fired after `Reload()` completes. Use this to refresh any cached values that were read from config entries at startup.
+
+```csharp
+Config.ConfigReloaded += (sender, args) =>
+{
+    // Re-read cached values after an external reload
+    _cachedSpeed = _speedEntry.Value;
+};
+```
+
+## Complete example
+
+```csharp
+[BepInPlugin("com.example.mymod", "My Mod", "1.0.0")]
+public class MyPlugin : BaseUnityPlugin
+{
+    private ConfigEntry<bool>  _cfgEnabled;
+    private ConfigEntry<float> _cfgSpeed;
+    private ConfigEntry<int>   _cfgDifficulty;
+
+    private void Awake()
+    {
+        _cfgEnabled = Config.Bind(
+            "General", "Enabled", true,
+            "Enable or disable the mod.");
+
+        _cfgSpeed = Config.Bind(
+            "Movement", "WalkSpeed", 5.0f,
+            new ConfigDescription(
+                "Player walk speed in units per second.",
+                new AcceptableValueRange<float>(0.1f, 20f)));
+
+        _cfgDifficulty = Config.Bind(
+            "Gameplay", "Difficulty", 1,
+            new ConfigDescription(
+                "Difficulty level (1 = Easy, 2 = Normal, 3 = Hard).",
+                new AcceptableValueRange<int>(1, 3)));
+
+        Config.SettingChanged += OnSettingChanged;
+        Config.ConfigReloaded += OnConfigReloaded;
+    }
+
+    private void OnSettingChanged(object sender, SettingChangedEventArgs args)
+    {
+        Logger.LogInfo($"{args.ChangedSetting.Definition} changed to {args.ChangedSetting.BoxedValue}");
+    }
+
+    private void OnConfigReloaded(object sender, EventArgs args)
+    {
+        Logger.LogInfo("Config reloaded from disk.");
+    }
+}
+```

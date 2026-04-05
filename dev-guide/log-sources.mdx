@@ -1,0 +1,206 @@
+---
+title: "Log sources"
+description: "Create and use log sources to emit structured log events into the BepInEx logging pipeline."
+---
+
+A log source is any object that implements `ILogSource` and raises `LogEvent` when it has something to say. `Logger` subscribes to every registered source and fans its events out to all matching listeners.
+
+## `ILogSource` interface
+
+```csharp
+public interface ILogSource : IDisposable
+{
+    // Human-readable name shown in log output, e.g. "[Info:MyPlugin]"
+    string SourceName { get; }
+
+    // Raise this event to emit a log message into the pipeline.
+    event EventHandler<LogEventArgs> LogEvent;
+}
+```
+
+Implementing this interface directly is only necessary when you need a custom event source (for example, bridging a third-party logging framework). For ordinary plugin code, use `ManualLogSource`.
+
+## `ManualLogSource`
+
+`ManualLogSource` is the standard log source for plugins. It exposes a straightforward imperative API so you can emit log messages without managing events yourself.
+
+### Getting a source
+
+`BaseUnityPlugin` automatically calls `Logger.CreateLogSource(pluginName)` and stores the result in its `Logger` property. You do not need to create one manually inside a plugin class.
+
+If you need a separate source — for example, from a non-`MonoBehaviour` helper class — create one explicitly:
+
+```csharp
+// Create a source and register it with the Logger in one call.
+ManualLogSource mySource = Logger.CreateLogSource("MyModule");
+```
+
+`Logger.CreateLogSource` constructs the `ManualLogSource`, adds it to `Logger.Sources`, and returns it. The source is active immediately.
+
+### Emitting log messages
+
+<Tabs>
+  <Tab title="Typed helper methods">
+    ```csharp
+    mySource.LogFatal("Unrecoverable failure, aborting.");
+    mySource.LogError("Failed to load config file.");
+    mySource.LogWarning("Config value out of range, using default.");
+    mySource.LogMessage("Mod fully loaded and ready.");
+    mySource.LogInfo("Watching directory: " + watchPath);
+    mySource.LogDebug("Cache size: " + cache.Count);
+    ```
+  </Tab>
+  <Tab title="Generic Log method">
+    ```csharp
+    // Pass any LogLevel, including combined flags.
+    mySource.Log(LogLevel.Info, "Server started.");
+    mySource.Log(LogLevel.Warning | LogLevel.Message, "Degraded mode active.");
+    ```
+  </Tab>
+</Tabs>
+
+### Zero-alloc interpolated string overloads
+
+Every method also accepts a C# interpolated string. The compiler routes `$"..."` to a `BepInExLogInterpolatedStringHandler` overload that checks `Logger.ListenedLogLevels` first. If no listener wants that level, the string is never built and no heap allocation occurs.
+
+```csharp
+// No allocation if Debug is not listened to — the interpolation is skipped entirely.
+mySource.LogDebug($"Processed {items.Count} items in {stopwatch.ElapsedMilliseconds} ms.");
+
+// Same zero-alloc guarantee for all levels.
+mySource.LogInfo($"Loaded {assets.Length} assets from {bundlePath}.");
+```
+
+### Method reference
+
+<ResponseField name="Log(level, data)" type="void">
+  Emit a log message at the given `LogLevel`. Multiple levels may be OR-ed together.
+</ResponseField>
+
+<ResponseField name="Log(level, logHandler)" type="void">
+  Interpolated string overload. Skips string evaluation when the level is not listened to.
+</ResponseField>
+
+<ResponseField name="LogFatal(data)" type="void">
+  Shorthand for `Log(LogLevel.Fatal, data)`.
+</ResponseField>
+
+<ResponseField name="LogError(data)" type="void">
+  Shorthand for `Log(LogLevel.Error, data)`.
+</ResponseField>
+
+<ResponseField name="LogWarning(data)" type="void">
+  Shorthand for `Log(LogLevel.Warning, data)`.
+</ResponseField>
+
+<ResponseField name="LogMessage(data)" type="void">
+  Shorthand for `Log(LogLevel.Message, data)`.
+</ResponseField>
+
+<ResponseField name="LogInfo(data)" type="void">
+  Shorthand for `Log(LogLevel.Info, data)`.
+</ResponseField>
+
+<ResponseField name="LogDebug(data)" type="void">
+  Shorthand for `Log(LogLevel.Debug, data)`.
+</ResponseField>
+
+### Disposing a source
+
+Call `Dispose()` when the source is no longer needed, and remove it from `Logger.Sources` to stop it from receiving pipeline callbacks:
+
+```csharp
+Logger.Sources.Remove(mySource);
+mySource.Dispose();
+```
+
+`ManualLogSource.Dispose()` is a no-op in the current implementation, but removing the source from the collection is important to avoid memory leaks and phantom log entries.
+
+## `Logger.Sources` collection
+
+`Logger.Sources` is an `ICollection<ILogSource>`. When a source is added, `Logger` subscribes to its `LogEvent`; when removed, it unsubscribes.
+
+```csharp
+// Add a custom source.
+var custom = new MyCustomLogSource();
+Logger.Sources.Add(custom);
+
+// Remove it later.
+Logger.Sources.Remove(custom);
+```
+
+<Note>
+  Sources are active as soon as they are added to `Logger.Sources`. Removing a source also unsubscribes it from the internal log event immediately.
+</Note>
+
+## Built-in bridge sources
+
+BepInEx ships two sources that bridge existing .NET and library logging APIs into the BepInEx pipeline. You typically do not interact with these directly — BepInEx registers them during bootstrap — but understanding them helps when diagnosing unexpected log entries.
+
+### `TraceLogSource`
+
+`TraceLogSource` extends `System.Diagnostics.TraceListener` and routes all output from the .NET `Trace` API to a `ManualLogSource` named `"Trace"`.
+
+```csharp
+// BepInEx calls this during bootstrap. Calling it again returns the existing source.
+ILogSource traceSource = TraceLogSource.CreateSource();
+Logger.Sources.Add(traceSource);
+```
+
+After `CreateSource()` is called, `TraceLogSource.IsListening` is `true` and any call to `Trace.WriteLine(...)`, `Trace.TraceError(...)`, etc. will appear in BepInEx logs.
+
+The mapping from `TraceEventType` to `LogLevel` is:
+
+| `TraceEventType` | `LogLevel` |
+|------------------|------------|
+| `Critical` | `Fatal` |
+| `Error` | `Error` |
+| `Warning` | `Warning` |
+| `Information` | `Info` |
+| All others | `Debug` |
+
+### `HarmonyLogSource`
+
+`HarmonyLogSource` subscribes to `HarmonyLib.Tools.Logger.MessageReceived` and re-emits those messages under the source name `"HarmonyX"`. The active channels are configured via `Harmony.Logger` → `LogChannels` in `BepInEx.cfg` (default: `Warn | Error`).
+
+| Harmony `LogChannel` | `LogLevel` |
+|----------------------|------------|
+| `Info` | `Info` |
+| `Warn` | `Warning` |
+| `Error` | `Error` |
+| `IL` | `Debug` |
+
+<Note>
+  The `IL` channel dumps full patch method IL. Enable it only when diagnosing Harmony patching issues — it produces very verbose output.
+</Note>
+
+## Full example
+
+```csharp MyPlugin.cs
+using BepInEx;
+using BepInEx.Logging;
+
+[BepInPlugin("com.example.myplugin", "My Plugin", "1.0.0")]
+public class MyPlugin : BaseUnityPlugin
+{
+    // The base class already provides Logger (a ManualLogSource).
+    // Create an extra source for a subsystem with its own name in log output.
+    private static ManualLogSource _netLog;
+
+    private void Awake()
+    {
+        _netLog = Logger.CreateLogSource("MyPlugin.Network");
+
+        Logger.LogInfo("Core initialized.");
+        _netLog.LogInfo("Network subsystem ready.");
+        _netLog.LogDebug($"Connecting to {ServerAddress}:{ServerPort}");
+    }
+
+    private void OnDestroy()
+    {
+        // Clean up the extra source when the plugin unloads.
+        Logger.Sources.Remove(_netLog);
+        _netLog.Dispose();
+    }
+}
+```

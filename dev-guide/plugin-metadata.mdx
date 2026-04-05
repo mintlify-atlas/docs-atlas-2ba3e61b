@@ -1,0 +1,141 @@
+---
+title: "Plugin metadata"
+description: Configure your plugin's identity, version, and process restrictions using BepInEx metadata attributes.
+---
+
+BepInEx reads plugin metadata from C# attributes applied to your plugin class. These attributes are processed by the chainloader at startup — before any plugin code runs — using Mono.Cecil for static analysis. Invalid or missing metadata causes the plugin to be skipped entirely.
+
+## `[BepInPlugin]`
+
+The `[BepInPlugin]` attribute is **required** on every plugin class. It declares the plugin's unique identifier, display name, and version. BepInEx will refuse to load a class that extends `BaseUnityPlugin` without this attribute.
+
+```csharp
+[BepInPlugin("com.example.myplugin", "My Plugin", "1.0.0")]
+public class MyPlugin : BaseUnityPlugin { }
+```
+
+### Parameters
+
+<ParamField path="GUID" type="string" required>
+  The globally unique identifier for the plugin. Must match the regular expression `^[a-zA-Z0-9\._\-]+$` — only alphanumeric characters, dots, underscores, and dashes are allowed.
+
+  The GUID **must not change between versions**. Other plugins reference your plugin by GUID in their `[BepInDependency]` attributes. Changing it breaks compatibility.
+
+  Use reverse-domain notation to avoid collisions: `com.yourname.pluginname`.
+</ParamField>
+
+<ParamField path="Name" type="string" required>
+  The human-readable display name of the plugin. This is used in log output, error messages, and mod managers. Unlike the GUID, the name **can change between versions**.
+</ParamField>
+
+<ParamField path="Version" type="string" required>
+  The plugin version. Must be a valid [Semantic Versioning](https://semver.org/) string (e.g. `1.0.0`, `2.3.1`). BepInEx also accepts the four-part `System.Version` format (e.g. `1.0.0.0`) and converts it to SemVer by dropping the fourth segment. Invalid version strings cause the plugin to be skipped at load time.
+</ParamField>
+
+### GUID format rules
+
+The chainloader validates GUIDs against `^[a-zA-Z0-9\._\-]+$` and logs a warning, skipping the plugin, if the GUID fails validation:
+
+```
+[Warning :   BepInEx] Skipping type [MyNamespace.MyPlugin] because its GUID [my plugin!] is of an illegal format.
+```
+
+<Warning>
+  Spaces, slashes, `@`, `#`, or any other special characters are not allowed in GUIDs. `com.example.my-plugin` and `com.example.my_plugin` are both valid; `com.example.my plugin` is not.
+</Warning>
+
+### Versioning
+
+BepInEx uses the [SemanticVersioning](https://github.com/adamreeve/semver.net) library internally. The `[BepInPlugin]` constructor calls `SemanticVersioning.Version.TryParse()` first, then falls back to `System.Version` parsing. Use standard SemVer:
+
+```csharp
+// Valid
+[BepInPlugin("com.example.myplugin", "My Plugin", "1.0.0")]
+[BepInPlugin("com.example.myplugin", "My Plugin", "2.1.0-beta.1")]
+[BepInPlugin("com.example.myplugin", "My Plugin", "1.0.0.0")] // converted to 1.0.0
+
+// Invalid — plugin will be skipped at load
+[BepInPlugin("com.example.myplugin", "My Plugin", "v1.0")]
+[BepInPlugin("com.example.myplugin", "My Plugin", "latest")]
+```
+
+### Constants pattern
+
+Declare GUID, name, and version as `public const string` fields on the class itself. This lets other plugins reference your GUID without hard-coding strings:
+
+```csharp
+[BepInPlugin(MyPlugin.GUID, MyPlugin.Name, MyPlugin.Version)]
+public class MyPlugin : BaseUnityPlugin
+{
+    public const string GUID    = "com.example.myplugin";
+    public const string Name    = "My Plugin";
+    public const string Version = "1.0.0";
+}
+```
+
+---
+
+## `[BepInProcess]`
+
+`[BepInProcess]` restricts a plugin to one or more specific process names. If the game executable does not match any listed process, the chainloader skips the plugin with a warning.
+
+```csharp
+[BepInPlugin("com.example.myplugin", "My Plugin", "1.0.0")]
+[BepInProcess("GameName.exe")]
+public class MyPlugin : BaseUnityPlugin { }
+```
+
+The comparison is **case-insensitive** and strips the `.exe` extension before comparing. You can apply multiple `[BepInProcess]` attributes — the plugin loads if **any one** of them matches the current process:
+
+```csharp
+[BepInPlugin("com.example.myplugin", "My Plugin", "1.0.0")]
+[BepInProcess("GameName.exe")]
+[BepInProcess("GameName_Demo.exe")]
+public class MyPlugin : BaseUnityPlugin { }
+```
+
+If no `[BepInProcess]` attributes are present, the plugin loads under **every** process.
+
+<ParamField path="ProcessName" type="string" required>
+  The name of the executable process this plugin is allowed to run under. Include the `.exe` extension — BepInEx strips it during comparison, so `"GameName.exe"` and `"GameName"` both work.
+</ParamField>
+
+<Note>
+  `[BepInProcess]` is useful for plugin packs that ship DLLs targeting multiple games in the same `plugins/` folder, or for plugins that support both the base game and a demo executable.
+</Note>
+
+---
+
+## Reading metadata at runtime
+
+Use `MetadataHelper.GetMetadata()` to read `[BepInPlugin]` metadata from a type or instance at runtime. This is useful for logging your own version or checking another plugin's metadata.
+
+```csharp
+// From a type
+BepInPlugin meta = MetadataHelper.GetMetadata(typeof(MyPlugin));
+Logger.LogInfo($"GUID: {meta.GUID}, Version: {meta.Version}");
+
+// From an instance (e.g. inside Awake())
+BepInPlugin meta = MetadataHelper.GetMetadata(this);
+Logger.LogInfo($"Running as: {meta.Name} v{meta.Version}");
+```
+
+`GetMetadata()` returns `null` if the type does not have a `[BepInPlugin]` attribute.
+
+To retrieve other attribute types (such as all `[BepInDependency]` attributes), use the generic overload:
+
+```csharp
+BepInDependency[] deps = MetadataHelper.GetAttributes<BepInDependency>(typeof(MyPlugin));
+foreach (var dep in deps)
+    Logger.LogInfo($"Depends on: {dep.DependencyGUID}");
+```
+
+The `Info` property on `BaseUnityPlugin` exposes the fully-resolved `PluginInfo`, which includes the parsed metadata, dependency list, process filters, and the DLL path:
+
+```csharp
+private void Awake()
+{
+    Logger.LogInfo($"Loaded from: {Info.Location}");
+    Logger.LogInfo($"GUID: {Info.Metadata.GUID}");
+}
+```

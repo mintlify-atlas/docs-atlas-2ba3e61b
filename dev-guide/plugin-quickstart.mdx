@@ -1,0 +1,136 @@
+---
+title: "Plugin quickstart"
+description: Get a BepInEx plugin running in under 5 minutes.
+---
+
+This guide walks you through creating a minimal BepInEx plugin for a Unity (Mono) game, from project setup to verifying the plugin loads.
+
+<Steps>
+  <Step title="Create a C# class library project">
+    Create a new .NET class library targeting `net35` or `netstandard2.0` depending on the game's Unity version. Most Unity Mono games use .NET 3.5 or .NET 4.x.
+
+    ```bash
+    dotnet new classlib -n MyPlugin --framework netstandard2.0
+    cd MyPlugin
+    ```
+
+    <Note>
+      If the game uses an older Unity version (pre-2018), target `net35` instead. Check the game's `*_Data/Managed/` folder — if it contains `netstandard.dll`, `netstandard2.0` works.
+    </Note>
+  </Step>
+
+  <Step title="Add NuGet references">
+    Add the `BepInEx.Unity.Mono` package, which provides `BaseUnityPlugin`, the logger, and all core BepInEx APIs.
+
+    Edit your `.csproj` to match:
+
+    <CodeGroup>
+
+    ```xml MyPlugin.csproj
+    <Project Sdk="Microsoft.NET.Sdk">
+      <PropertyGroup>
+        <TargetFramework>netstandard2.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>disable</ImplicitUsings>
+      </PropertyGroup>
+
+      <ItemGroup>
+        <PackageReference Include="BepInEx.Unity.Mono" Version="6.*" />
+      </ItemGroup>
+    </Project>
+    ```
+
+    </CodeGroup>
+
+    Then restore packages:
+
+    ```bash
+    dotnet restore
+    ```
+  </Step>
+
+  <Step title="Write a minimal plugin class">
+    Replace the contents of `Class1.cs` (or create a new file) with the following. Every BepInEx plugin must:
+
+    - Extend `BaseUnityPlugin`
+    - Be decorated with `[BepInPlugin(GUID, Name, Version)]`
+    - Use `Awake()` as the Unity entry point
+
+    <CodeGroup>
+
+    ```csharp MyPlugin.cs
+    using BepInEx;
+    using BepInEx.Unity.Mono;
+    using UnityEngine;
+
+    namespace MyPlugin;
+
+    [BepInPlugin(MyPlugin.GUID, MyPlugin.Name, MyPlugin.Version)]
+    public class MyPlugin : BaseUnityPlugin
+    {
+        public const string GUID    = "com.example.myplugin";
+        public const string Name    = "My Plugin";
+        public const string Version = "1.0.0";
+
+        private void Awake()
+        {
+            Logger.LogInfo("Plugin is loaded!");
+        }
+    }
+    ```
+
+    </CodeGroup>
+
+    `BaseUnityPlugin` inherits from Unity's `MonoBehaviour`, so all Unity lifecycle methods (`Awake`, `Start`, `Update`, `OnDestroy`, etc.) are available.
+
+    <Tip>
+      Expose `GUID`, `Name`, and `Version` as `public const string` fields. This lets other plugins reference your GUID without hard-coding strings in their `[BepInDependency]` attributes.
+    </Tip>
+  </Step>
+
+  <Step title="Build and install the plugin">
+    Build the project and copy the output DLL into the game's `BepInEx/plugins/` directory:
+
+    ```bash
+    dotnet build -c Release
+    ```
+
+    The compiled DLL will be in `bin/Release/netstandard2.0/MyPlugin.dll`. Copy it to:
+
+    ```
+    <GameFolder>/
+    └── BepInEx/
+        └── plugins/
+            └── MyPlugin.dll
+    ```
+
+    You can place the DLL directly in `plugins/` or in a subdirectory — BepInEx scans recursively.
+  </Step>
+
+  <Step title="Verify the plugin loads">
+    Launch the game, then open `BepInEx/LogOutput.log`. Look for the following lines:
+
+    ```
+    [Info   :   BepInEx] Loading [My Plugin 1.0.0]
+    [Info   : My Plugin] Plugin is loaded!
+    ```
+
+    The first line is emitted by BepInEx's chainloader. The second is your `Logger.LogInfo()` call from `Awake()`.
+
+    <Warning>
+      If you see `Could not load [My Plugin 1.0.0] because it has missing dependencies`, check that the dependency GUIDs in your `[BepInDependency]` attributes match installed plugins exactly. See [Plugin dependencies](/dev-guide/plugin-dependencies) for details.
+    </Warning>
+  </Step>
+</Steps>
+
+## What `BaseUnityPlugin` provides
+
+When BepInEx instantiates your plugin class, the `BaseUnityPlugin` constructor automatically wires up:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `Logger` | `ManualLogSource` | Pre-configured log source named after your plugin's `Name`. |
+| `Config` | `ConfigFile` | Config file at `BepInEx/config/<GUID>.cfg`, created on first write. |
+| `Info` | `PluginInfo` | Runtime metadata, dependency list, process filters, and the assembly location. |
+
+The `Logger` property is `protected`, so it is only accessible within your plugin class and subclasses. Access it directly in `Awake()`, `Update()`, or any other method without any additional setup.

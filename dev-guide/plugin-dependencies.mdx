@@ -1,0 +1,194 @@
+---
+title: "Plugin dependencies"
+description: Declare hard and soft dependencies, version constraints, and incompatibilities between BepInEx plugins.
+---
+
+BepInEx resolves plugin load order and compatibility entirely through attributes declared on your plugin class. The chainloader reads these attributes using Mono.Cecil before instantiating any plugin, so the declarations must be correct at compile time.
+
+## `[BepInDependency]`
+
+`[BepInDependency]` declares that your plugin depends on another plugin identified by its GUID. The attribute is repeatable — apply it multiple times to express multiple dependencies.
+
+### Hard dependency (default)
+
+A hard dependency means your plugin **cannot run** without the specified plugin being loaded first. If the dependency is missing or failed to load, BepInEx skips your plugin and logs an error.
+
+```csharp
+[BepInPlugin("com.example.myplugin", "My Plugin", "1.0.0")]
+[BepInDependency("com.example.somedependency")]
+public class MyPlugin : BaseUnityPlugin { }
+```
+
+This is equivalent to explicitly passing `DependencyFlags.HardDependency`:
+
+```csharp
+[BepInDependency("com.example.somedependency", BepInDependency.DependencyFlags.HardDependency)]
+```
+
+When a hard dependency is missing, the chainloader logs:
+
+```
+[Error  :   BepInEx] Could not load [My Plugin 1.0.0] because it has missing dependencies: com.example.somedependency
+```
+
+### Soft dependency
+
+A soft dependency means your plugin **can run** without the specified plugin. The chainloader still ensures the dependency is loaded *before* your plugin if it is present, but does not abort loading if it is absent.
+
+```csharp
+[BepInPlugin("com.example.myplugin", "My Plugin", "1.0.0")]
+[BepInDependency("com.example.optionalplugin", BepInDependency.DependencyFlags.SoftDependency)]
+public class MyPlugin : BaseUnityPlugin { }
+```
+
+Use soft dependencies when you want to integrate with another plugin if it exists, but your plugin works independently:
+
+```csharp
+private void Awake()
+{
+    if (BepInEx.Unity.Mono.Bootstrap.UnityChainloader.Instance.Plugins
+            .ContainsKey("com.example.optionalplugin"))
+    {
+        Logger.LogInfo("Optional integration enabled.");
+        // Enable integration features here
+    }
+}
+```
+
+### Version-constrained dependency
+
+Pass a version range string as the second argument to require a specific version of a dependency. When a version is specified, the dependency is **always treated as a hard dependency**, regardless of flags.
+
+```csharp
+[BepInPlugin("com.example.myplugin", "My Plugin", "1.0.0")]
+[BepInDependency("com.example.somedependency", "1.2.0")]
+public class MyPlugin : BaseUnityPlugin { }
+```
+
+The version string is parsed as a [SemVer range](https://github.com/adamreeve/semver.net) using the `SemanticVersioning.Range` type. If the installed version does not satisfy the range, BepInEx logs an error and skips your plugin:
+
+```
+[Error  :   BepInEx] Could not load [My Plugin 1.0.0] because it has missing dependencies: com.example.somedependency (>=1.2.0)
+```
+
+---
+
+## `DependencyFlags` enum
+
+<ParamField path="HardDependency" type="DependencyFlags" default="HardDependency">
+  Value: `1`. The plugin will not load if the referenced dependency is absent or failed to load. This is the default when no flags are specified.
+</ParamField>
+
+<ParamField path="SoftDependency" type="DependencyFlags">
+  Value: `2`. The plugin loads regardless of whether the dependency is present. The dependency is still loaded before your plugin when present, preserving correct initialization order.
+</ParamField>
+
+---
+
+## `[BepInIncompatibility]`
+
+`[BepInIncompatibility]` declares that your plugin **must not be loaded** alongside the specified plugin. If the incompatible plugin is already loaded or discovered in the same loading pass, BepInEx skips your plugin and logs an error.
+
+```csharp
+[BepInPlugin("com.example.myplugin", "My Plugin", "1.0.0")]
+[BepInIncompatibility("com.example.conflictingplugin")]
+public class MyPlugin : BaseUnityPlugin { }
+```
+
+The attribute is repeatable:
+
+```csharp
+[BepInIncompatibility("com.example.conflictingplugin")]
+[BepInIncompatibility("com.example.anotherbadplugin")]
+```
+
+When an incompatibility is detected, the chainloader logs:
+
+```
+[Error  :   BepInEx] Could not load [My Plugin 1.0.0] because it is incompatible with: com.example.conflictingplugin
+```
+
+<ParamField path="IncompatibilityGUID" type="string" required>
+  The GUID of the plugin that cannot coexist with your plugin. If a plugin with this GUID is loaded or in the load queue, your plugin is skipped.
+</ParamField>
+
+<Warning>
+  Incompatibility is one-directional. If plugin A declares incompatibility with plugin B, plugin A is skipped when B is present — but plugin B is not skipped when A is present. To make the conflict mutual, both plugins must declare `[BepInIncompatibility]` referencing each other.
+</Warning>
+
+---
+
+## How the chainloader handles dependencies
+
+The chainloader processes all discovered plugins before loading any of them. Here is how it resolves the load order and handles failures:
+
+1. **Process filter check** — Plugins with `[BepInProcess]` attributes that do not match the current executable are skipped before dependency resolution.
+2. **Incompatibility check** — Plugins whose `[BepInIncompatibility]` targets are present (already loaded or in the current batch) are removed from the load set.
+3. **Topological sort** — The remaining plugins are sorted so that every dependency is loaded before the plugins that depend on it.
+4. **Missing hard dependency check** — For each plugin in sorted order, if a hard dependency is not in the `processedPlugins` set (either not discovered or previously failed), the plugin is skipped.
+5. **Version range check** — If a `[BepInDependency]` specifies a version range, the loaded version of the dependency is checked with `Range.IsSatisfied()`. A mismatch is treated as a missing hard dependency.
+6. **Cascading failure** — If a plugin that is a hard dependency of another plugin failed to load (due to an exception or missing dependencies of its own), all downstream hard-dependent plugins are also skipped.
+
+Soft-dependent plugins that are missing are simply absent from the dependency graph; they do not cause loading errors.
+
+---
+
+## Version range syntax
+
+Version ranges follow the [node-semver](https://github.com/adamreeve/semver.net) syntax, parsed by `SemanticVersioning.Range.Parse()`:
+
+| Range | Meaning |
+|-------|---------|
+| `"1.2.0"` | Exactly `>=1.2.0` (minimum version, any compatible) |
+| `">=1.2.0 <2.0.0"` | At least `1.2.0` and below `2.0.0` |
+| `"^1.2.0"` | Compatible with `1.2.0` — `>=1.2.0 <2.0.0` |
+| `"~1.2.0"` | Approximately `1.2.0` — `>=1.2.0 <1.3.0` |
+| `"1.2.x"` | Any patch of `1.2` |
+
+<Tip>
+  Prefer `^` (caret) ranges in most cases. `^1.2.0` allows any `1.x.x` version at or above `1.2.0`, which accommodates non-breaking minor releases from the dependency without requiring you to update your range string.
+</Tip>
+
+---
+
+## Complete example
+
+```csharp
+using BepInEx;
+using BepInEx.Unity.Mono;
+
+namespace MyPlugin;
+
+[BepInPlugin(MyPlugin.GUID, MyPlugin.Name, MyPlugin.Version)]
+
+// Hard dependency — will not load without this plugin
+[BepInDependency("com.example.requiredlib")]
+
+// Hard dependency with minimum version constraint
+[BepInDependency("com.example.anotherlib", "2.0.0")]
+
+// Soft dependency — loads even if this plugin is absent
+[BepInDependency("com.example.optionalintegration", BepInDependency.DependencyFlags.SoftDependency)]
+
+// Incompatibility — will not load alongside this plugin
+[BepInIncompatibility("com.example.conflictingmod")]
+
+public class MyPlugin : BaseUnityPlugin
+{
+    public const string GUID    = "com.example.myplugin";
+    public const string Name    = "My Plugin";
+    public const string Version = "1.0.0";
+
+    private void Awake()
+    {
+        Logger.LogInfo("Plugin is loaded!");
+
+        // Check soft dependency at runtime before using it
+        if (BepInEx.Unity.Mono.Bootstrap.UnityChainloader.Instance.Plugins
+                .ContainsKey("com.example.optionalintegration"))
+        {
+            Logger.LogInfo("Optional integration active.");
+        }
+    }
+}
+```

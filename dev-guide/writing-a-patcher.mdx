@@ -1,0 +1,282 @@
+---
+title: "Writing a patcher"
+description: "Step-by-step guide to creating a BepInEx preloader patcher that modifies game assemblies with Mono.Cecil before they are loaded."
+---
+
+<Warning>
+  Preloader patchers run before any game or Unity APIs are available. Read [Preloader patchers](/dev-guide/patchers-overview) before continuing to make sure a patcher is the right tool for your task.
+</Warning>
+
+<Steps>
+
+<Step title="Create a C# class library project">
+
+Create a new `.csproj` targeting `net472` (or `netstandard2.0` if the target game supports it):
+
+```xml
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+</Project>
+```
+
+</Step>
+
+<Step title="Add the BepInEx.Preloader.Core NuGet reference">
+
+Add a reference to the `BepInEx.Preloader.Core` NuGet package, which provides `BasePatcher`, the targeting attributes, and `PatcherContext`:
+
+```xml
+<ItemGroup>
+  <PackageReference Include="BepInEx.Preloader.Core" Version="6.*" />
+</ItemGroup>
+```
+
+<Tip>
+  Pin the major version (`6.*`) to match the BepInEx version installed in the target game. Mixing major versions will cause load failures.
+</Tip>
+
+</Step>
+
+<Step title="Extend BasePatcher and add [PatcherPluginInfo]">
+
+Create a class that inherits from `BasePatcher` and decorate it with `[PatcherPluginInfo]`. This attribute is **required** — BepInEx will silently skip any `BasePatcher` subclass that is missing it.
+
+```csharp
+using BepInEx.Preloader.Core.Patching;
+
+[PatcherPluginInfo("com.example.mypatcher", "My Patcher", "1.0.0")]
+public class MyPatcher : BasePatcher
+{
+}
+```
+
+The three constructor arguments map to `GUID`, `Name`, and `Version`. The GUID must match the pattern `[a-zA-Z0-9._\-]+` and must be globally unique.
+
+</Step>
+
+<Step title="Implement Initialize() if needed">
+
+Override `Initialize()` to perform setup before any patch methods run. This is the right place to inspect `Context.AvailableAssemblies` and add any additional assemblies you want staged for patching.
+
+```csharp
+public override void Initialize()
+{
+    Log.LogInfo($"Initializing {Info.Name} v{Info.Version}");
+
+    // Log all assemblies that will be patched
+    foreach (var assemblyName in Context.AvailableAssemblies.Keys)
+        Log.LogDebug($"Available: {assemblyName}");
+}
+```
+
+`Initialize()` is optional. If you have no setup work, you can omit it.
+
+</Step>
+
+<Step title="Write patch methods with [TargetAssembly] or [TargetType]">
+
+Patch methods are discovered by BepInEx at load time. A method is treated as a patch if it has at least one `[TargetAssembly]` or `[TargetType]` attribute and an accepted signature.
+
+### Targeting a specific assembly
+
+The method receives the full `AssemblyDefinition` and can iterate over all its types:
+
+```csharp
+[TargetAssembly("Assembly-CSharp.dll")]
+public void PatchGameAssembly(AssemblyDefinition assembly)
+{
+    foreach (var type in assembly.MainModule.Types)
+        Log.LogDebug($"Type: {type.FullName}");
+}
+```
+
+### Targeting all assemblies
+
+Use `TargetAssemblyAttribute.AllAssemblies` to receive every assembly that BepInEx loads. The optional second parameter receives the filename of the current assembly being processed:
+
+```csharp
+[TargetAssembly(TargetAssemblyAttribute.AllAssemblies)]
+public void PatchAll(AssemblyDefinition assembly, string assemblyFileName)
+{
+    Log.LogDebug($"Processing {assemblyFileName}");
+}
+```
+
+### Targeting a specific type
+
+`[TargetType]` passes the matching `TypeDefinition` directly, saving you the traversal:
+
+```csharp
+[TargetType("Assembly-CSharp.dll", "MyNamespace.PlayerController")]
+public void PatchPlayerController(TypeDefinition type)
+{
+    // type is exactly MyNamespace.PlayerController
+}
+```
+
+### Returning bool to signal whether patching occurred
+
+Patch methods can return `bool`. Return `false` to tell BepInEx that no changes were made — the assembly will only be marked as patched (and written to disk when dump mode is on) if the method returns `true` or `void`:
+
+```csharp
+[TargetAssembly("Assembly-CSharp.dll")]
+public bool PatchConditionally(AssemblyDefinition assembly)
+{
+    var type = assembly.MainModule.Types
+        .FirstOrDefault(t => t.Name == "TargetClass");
+
+    if (type == null)
+    {
+        Log.LogWarning("TargetClass not found — skipping patch");
+        return false;
+    }
+
+    // ... apply patch ...
+    return true;
+}
+```
+
+### Valid method signatures
+
+| Signature | When to use |
+|-----------|-------------|
+| `void Method(AssemblyDefinition assembly)` | Patch an assembly, always applies |
+| `bool Method(AssemblyDefinition assembly)` | Patch an assembly, conditionally applies |
+| `void Method(AssemblyDefinition assembly, string fileName)` | Patch an assembly, also needs the filename |
+| `bool Method(AssemblyDefinition assembly, string fileName)` | Conditional patch with filename |
+| `void Method(TypeDefinition type)` | Patch a specific type |
+| `bool Method(TypeDefinition type)` | Conditional type patch |
+
+</Step>
+
+<Step title="Implement Finalizer() if needed">
+
+Override `Finalizer()` to run code after every patcher's patch methods have completed. This is useful for validation or cleanup:
+
+```csharp
+public override void Finalizer()
+{
+    Log.LogInfo("All patchers have finished. Patching complete.");
+}
+```
+
+</Step>
+
+<Step title="Place the compiled DLL in BepInEx/patchers/">
+
+Copy your build output to:
+
+```
+<game root>/BepInEx/patchers/MyPatcher.dll
+```
+
+BepInEx scans this directory on every launch. No other configuration is needed — the `[PatcherPluginInfo]` attribute on your class is sufficient for discovery.
+
+</Step>
+
+</Steps>
+
+## Complete example: making a private field public
+
+The following patcher finds `PlayerController` in `Assembly-CSharp.dll` and changes its `_health` field from `private` to `public`. This is a common pattern that lets regular plugins access game state without reflection.
+
+```csharp
+using BepInEx.Preloader.Core.Patching;
+using Mono.Cecil;
+
+[PatcherPluginInfo("com.example.exposehealthfield", "Expose Health Field", "1.0.0")]
+public class ExposeHealthFieldPatcher : BasePatcher
+{
+    [TargetType("Assembly-CSharp.dll", "PlayerController")]
+    public bool PatchPlayerController(TypeDefinition type)
+    {
+        var field = type.Fields.FirstOrDefault(f => f.Name == "_health");
+
+        if (field == null)
+        {
+            Log.LogWarning("Field '_health' not found on PlayerController.");
+            return false;
+        }
+
+        if (field.IsPublic)
+        {
+            Log.LogInfo("Field '_health' is already public — no patch needed.");
+            return false;
+        }
+
+        field.IsPrivate = false;
+        field.IsPublic = true;
+
+        Log.LogInfo("Made '_health' public on PlayerController.");
+        return true;
+    }
+}
+```
+
+## Complete example: injecting a method call
+
+This patcher injects a call to a static logging method at the very start of `PlayerController.Update()`, using `ILProcessor` to prepend instructions:
+
+```csharp
+using BepInEx.Preloader.Core.Patching;
+using Mono.Cecil;
+using Mono.Cecil.Cil;
+using System.Linq;
+
+[PatcherPluginInfo("com.example.updatehook", "Update Hook", "1.0.0")]
+public class UpdateHookPatcher : BasePatcher
+{
+    [TargetType("Assembly-CSharp.dll", "PlayerController")]
+    public bool HookUpdate(TypeDefinition type)
+    {
+        var updateMethod = type.Methods.FirstOrDefault(m => m.Name == "Update");
+
+        if (updateMethod == null || !updateMethod.HasBody)
+        {
+            Log.LogWarning("PlayerController.Update() not found.");
+            return false;
+        }
+
+        var module = type.Module;
+
+        // Import the method we want to call: MyPatchLibrary.Hooks.OnUpdate()
+        var hookRef = module.ImportReference(
+            typeof(MyPatchLibrary.Hooks).GetMethod(nameof(MyPatchLibrary.Hooks.OnUpdate)));
+
+        var il = updateMethod.Body.GetILProcessor();
+        var firstInstruction = updateMethod.Body.Instructions.First();
+
+        // Prepend: call void MyPatchLibrary.Hooks::OnUpdate()
+        il.InsertBefore(firstInstruction, il.Create(OpCodes.Call, hookRef));
+
+        Log.LogInfo("Injected OnUpdate hook into PlayerController.Update().");
+        return true;
+    }
+}
+```
+
+<Note>
+  The static method you inject (`MyPatchLibrary.Hooks.OnUpdate` above) must be in a separate assembly that the game will load. You cannot inject a call to a method defined in your patcher DLL itself, because patcher DLLs are not loaded into the game's AppDomain.
+</Note>
+
+## Accessing other assemblies from a patch method
+
+Use `Context.AvailableAssemblies` to look up any assembly that has been staged for patching. This is useful when a type you want to patch depends on a type defined in another assembly:
+
+```csharp
+[TargetAssembly("Assembly-CSharp.dll")]
+public void PatchWithCrossReference(AssemblyDefinition assembly)
+{
+    if (Context.AvailableAssemblies.TryGetValue("Assembly-CSharp-firstpass.dll", out var firstpass))
+    {
+        var sharedType = firstpass.MainModule.Types
+            .FirstOrDefault(t => t.FullName == "SharedNamespace.SharedType");
+
+        // Use sharedType for cross-assembly Cecil operations...
+    }
+}
+```

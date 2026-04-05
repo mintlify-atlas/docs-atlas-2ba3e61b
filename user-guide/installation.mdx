@@ -1,0 +1,175 @@
+---
+title: "Installation"
+description: "How to download and install BepInEx for Unity Mono, Unity IL2CPP, and .NET/XNA games on Windows, Linux, and macOS."
+---
+
+## Before you start
+
+- You need write access to the game's install folder.
+- BepInEx does **not** modify any original game files. All files it adds can be removed to fully uninstall it.
+- Stable releases support **Unity Mono** games. IL2CPP support is available in bleeding-edge builds.
+
+## Download BepInEx
+
+Go to the [GitHub Releases page](https://github.com/BepInEx/BepInEx/releases) and download the archive that matches your game's runtime and your OS architecture.
+
+| Archive name pattern             | Target                                  |
+|----------------------------------|-----------------------------------------|
+| `BepInEx_win_x64_*.zip`          | Unity Mono — Windows 64-bit             |
+| `BepInEx_win_x86_*.zip`          | Unity Mono — Windows 32-bit             |
+| `BepInEx_linux_x64_*.zip`        | Unity Mono — Linux 64-bit               |
+| `BepInEx_macos_x64_*.zip`        | Unity Mono — macOS (Intel)              |
+| `BepInEx_il2cpp_win_x64_*.zip`   | Unity IL2CPP — Windows 64-bit (BE)      |
+
+<Tip>
+  If you are not sure whether the game uses Mono or IL2CPP, check the game's install folder. A `GameAssembly.dll` file means IL2CPP. A `<GameName>_Data/Managed/` folder full of `.dll` files means Mono.
+</Tip>
+
+## Install BepInEx
+
+<Tabs>
+  <Tab title="Windows">
+    <Steps>
+      <Step title="Locate the game folder">
+        Find the game's root directory — the folder that contains the game executable (`.exe`). In Steam, right-click the game → **Manage** → **Browse local files**.
+      </Step>
+      <Step title="Extract the archive">
+        Extract the contents of the downloaded ZIP directly into the game's root folder. After extraction you should see:
+
+        ```text
+        <game root>/
+        ├── BepInEx/
+        ├── doorstop_config.ini
+        └── winhttp.dll
+        ```
+
+        Do not extract into a sub-folder — `winhttp.dll` must sit next to the game executable.
+      </Step>
+      <Step title="Launch the game once">
+        Start the game normally (through Steam, the launcher, or the `.exe` directly). BepInEx will initialise, create the remaining sub-folders under `BepInEx/`, and write `BepInEx/LogOutput.log`.
+      </Step>
+      <Step title="Verify the installation">
+        Open `BepInEx/LogOutput.log` in a text editor. A successful first run looks like:
+
+        ```text
+        [Message:   BepInEx] BepInEx 6.0.0 - <GameName>
+        [Message: Chainloader] Chainloader initialized
+        [Message: Chainloader] 0 plugins to load
+        [Message: Chainloader] Chainloader startup complete
+        ```
+
+        If the file is missing or empty, see [How Doorstop works on Windows](#how-doorstop-works-on-windows) below.
+      </Step>
+    </Steps>
+  </Tab>
+  <Tab title="Linux">
+    <Steps>
+      <Step title="Locate the game folder">
+        Find the game's root directory. In Steam, right-click → **Manage** → **Browse local files**.
+      </Step>
+      <Step title="Extract the archive">
+        Extract the downloaded archive into the game's root folder:
+
+        ```bash
+        unzip BepInEx_linux_x64_*.zip -d /path/to/game/
+        ```
+
+        After extraction you should see a `BepInEx/` folder and a `doorstop_config.ini` file alongside the game executable.
+      </Step>
+      <Step title="Configure Steam launch options">
+        BepInEx on Linux uses `LD_PRELOAD` to inject Doorstop. Set the following Steam launch option for the game:
+
+        ```bash
+        WINEDLLOVERRIDES="winhttp=n,b" %command%
+        ```
+
+        For non-Wine native Linux games, the launch option is instead:
+
+        ```bash
+        LD_PRELOAD="./doorstop_libs/libdoorstop.so" %command%
+        ```
+
+        Open the game's properties in Steam → **General** → **Launch Options** and paste the appropriate line.
+      </Step>
+      <Step title="Launch the game once">
+        Start the game through Steam. BepInEx will create the remaining sub-folders and write `BepInEx/LogOutput.log`.
+      </Step>
+      <Step title="Verify the installation">
+        Check `BepInEx/LogOutput.log`:
+
+        ```text
+        [Message:   BepInEx] BepInEx 6.0.0 - <GameName>
+        [Message: Chainloader] Chainloader initialized
+        [Message: Chainloader] 0 plugins to load
+        [Message: Chainloader] Chainloader startup complete
+        ```
+      </Step>
+    </Steps>
+  </Tab>
+  <Tab title="macOS">
+    <Steps>
+      <Step title="Locate the game folder">
+        For Steam games, right-click → **Manage** → **Browse local files**. On macOS the game root is the parent of the `.app` bundle — BepInEx resolves this automatically via `Utility.ParentDirectory(executablePath, 4)`.
+      </Step>
+      <Step title="Extract the archive">
+        Extract the downloaded archive into the game's root folder:
+
+        ```bash
+        unzip BepInEx_macos_x64_*.zip -d /path/to/game/
+        ```
+      </Step>
+      <Step title="Configure Steam launch options">
+        Set the following Steam launch option to inject Doorstop via `DYLD_INSERT_LIBRARIES`:
+
+        ```bash
+        DYLD_INSERT_LIBRARIES="./doorstop_libs/libdoorstop.dylib" %command%
+        ```
+
+        Open the game's properties in Steam → **General** → **Launch Options** and paste this line.
+      </Step>
+      <Step title="Launch the game once">
+        Start the game. BepInEx will initialise and write `BepInEx/LogOutput.log`.
+      </Step>
+      <Step title="Verify the installation">
+        Check `BepInEx/LogOutput.log`:
+
+        ```text
+        [Message:   BepInEx] BepInEx 6.0.0 - <GameName>
+        [Message: Chainloader] Chainloader initialized
+        [Message: Chainloader] 0 plugins to load
+        [Message: Chainloader] Chainloader startup complete
+        ```
+      </Step>
+    </Steps>
+  </Tab>
+</Tabs>
+
+## How Doorstop works on Windows
+
+On Windows, BepInEx ships `winhttp.dll` — a proxy DLL that the Windows loader picks up before the real system `winhttp.dll`. When the game process starts, Windows loads `winhttp.dll` from the application directory first. BepInEx's proxy DLL runs, reads `doorstop_config.ini` to find the preloader entry point, and invokes it via the Mono/IL2CPP runtime — all before any game code executes.
+
+Key files involved:
+
+```ini
+# doorstop_config.ini (auto-generated, safe to edit)
+[UnityDoorstop]
+enabled=true
+targetAssembly=BepInEx/core/BepInEx.Unity.Mono.Preloader.dll
+```
+
+<Warning>
+  Some anti-cheat systems flag `winhttp.dll` proxying. Never install BepInEx in online games with anti-cheat unless the game explicitly supports modding. You risk a ban.
+</Warning>
+
+## What happens on first run
+
+1. Doorstop invokes the BepInEx preloader entry point.
+2. The preloader sets up logging and reads environment variables passed by Doorstop (`DOORSTOP_INVOKE_DLL_PATH`, `DOORSTOP_MANAGED_FOLDER_DIR`, `DOORSTOP_PROCESS_PATH`).
+3. Patcher plugins from `BepInEx/patchers/` are loaded and applied to game assemblies in memory.
+4. The patched assemblies are handed to the CLR.
+5. The chainloader initialises, scans `BepInEx/plugins/`, and loads plugins in dependency order.
+6. All output is written to `BepInEx/LogOutput.log`.
+
+## Installing plugins
+
+Once BepInEx is installed and verified, drop plugin `.dll` files into `BepInEx/plugins/`. Sub-folders are supported — the chainloader scans recursively. Restart the game to load newly added plugins.

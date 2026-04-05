@@ -1,97 +1,61 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "BepInEx"
+description: "A plugin and modding framework for Unity Mono, IL2CPP, and .NET/XNA games. Load and manage mods without modifying game files."
 ---
 
-## Setting up
+BepInEx is the go-to plugin framework for modding Unity and .NET games. It injects into any supported game at startup — no patching required — and provides a complete toolkit for plugin authors: dependency management, configuration, logging, and assembly patching.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Install BepInEx" icon="download" href="/user-guide/installation">
+    Get BepInEx running in your game in minutes with the step-by-step installation guide.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Write your first plugin" icon="plug" href="/dev-guide/plugin-quickstart">
+    Build a working BepInEx plugin from scratch using real source code examples.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Configuration API" icon="sliders" href="/dev-guide/configuration-overview">
+    Persist and expose plugin settings using the type-safe configuration system.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Logging API" icon="list" href="/dev-guide/logging-overview">
+    Write structured log output to the console and disk from your plugin.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## What BepInEx provides
 
-Everything you need to create world-class documentation.
+<CardGroup cols={2}>
+  <Card title="Plugin loader" icon="boxes-stacked" href="/user-guide/introduction">
+    Discovers, orders, and loads plugins from the `BepInEx/plugins` folder with full dependency resolution.
+  </Card>
+  <Card title="Preloader patchers" icon="wrench" href="/dev-guide/patchers-overview">
+    Modify game assemblies using Mono.Cecil before they are loaded into the runtime.
+  </Card>
+  <Card title="IL2CPP support" icon="microchip" href="/dev-guide/il2cpp-plugins">
+    Full support for IL2CPP Unity games via Il2CppInterop — same plugin API, different base class.
+  </Card>
+  <Card title="HarmonyX patching" icon="code-merge" href="/dev-guide/harmony-patching">
+    Patch any game method at runtime using prefix, postfix, and transpiler hooks.
+  </Card>
+</CardGroup>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## Platform support
 
-## Need inspiration?
+| Runtime | Windows | macOS | Linux |
+|---|---|---|---|
+| Unity Mono | Yes | Yes | Yes |
+| Unity IL2CPP | Yes | No | Yes |
+| .NET / XNA | Yes | Mono | Mono |
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<Steps>
+  <Step title="Download BepInEx">
+    Grab the latest release for your platform from [GitHub Releases](https://github.com/BepInEx/BepInEx/releases).
+  </Step>
+  <Step title="Extract into your game folder">
+    Unzip BepInEx so the `BepInEx/` folder and `winhttp.dll` (or equivalent) sit next to your game executable.
+  </Step>
+  <Step title="Run the game once">
+    Launch the game to let BepInEx complete its first-run setup and generate the configuration file.
+  </Step>
+  <Step title="Install or write plugins">
+    Drop plugin DLLs into `BepInEx/plugins/` or follow the [plugin quickstart](/dev-guide/plugin-quickstart) to write your own.
+  </Step>
+</Steps>

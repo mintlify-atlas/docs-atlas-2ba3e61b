@@ -1,0 +1,209 @@
+---
+title: "Troubleshooting"
+description: "Diagnose and fix common issues with BepInEx installation, plugin loading, and logging."
+---
+
+If BepInEx is not working as expected, the log file is always the first place to look. Most issues leave a clear trace in `BepInEx/LogOutput.log`.
+
+## Log file location
+
+The primary log file is written to `BepInEx/LogOutput.log` inside your game folder. BepInEx creates this file on every launch (overwriting the previous one by default).
+
+If the game crashes before BepInEx finishes initializing, a timestamped emergency log is written directly to the game root folder with a name like `preloader_20240101_120000_000.log`. Check the game root folder if `LogOutput.log` is absent or empty.
+
+<Warning>
+  Always attach `LogOutput.log` when reporting issues. Log output from the console window alone is insufficient because the console only shows a subset of log levels by default.
+</Warning>
+
+## Log levels
+
+Each log entry is prefixed with its source and level. The levels, from most to least severe, are:
+
+| Level | Color in console | Meaning |
+|---|---|---|
+| `Fatal` | Red | Unrecoverable error; BepInEx or the game cannot continue |
+| `Error` | Dark red | Recoverable error; a component failed but execution continues |
+| `Warning` | Yellow | Something unexpected happened but is not necessarily broken |
+| `Message` | White | Important status updates intended for the user |
+| `Info` | Dark gray | General progress information |
+| `Debug` | Dark gray | Verbose developer detail, hidden by default in the console |
+
+The console shows `Fatal`, `Error`, `Warning`, `Message`, and `Info` by default. The disk log (`LogOutput.log`) captures all levels including `Debug`. You can change the console filter in `BepInEx/config/BepInEx.cfg` under `[Logging.Console] > LogLevels`.
+
+## Common issues
+
+<AccordionGroup>
+  <Accordion title="Game doesn't launch after installing BepInEx">
+    BepInEx uses [UnityDoorstop](https://github.com/NeighTools/UnityDoorstop) to inject into the game before it starts. If the game fails to launch entirely, the most common causes are:
+
+    <Steps>
+      <Step title="Verify you extracted BepInEx into the correct folder">
+        The `BepInEx/` folder, `winhttp.dll` (Windows), or `libdoorstop.so` / `libdoorstop.dylib` (Linux/macOS) must sit **directly next to the game executable** — not inside a subfolder.
+
+        ```
+        GameFolder/
+        ├── GameName.exe          ← game executable
+        ├── winhttp.dll           ← Doorstop proxy (Windows)
+        ├── doorstop_config.ini
+        └── BepInEx/
+            └── core/
+        ```
+      </Step>
+      <Step title="Check that doorstop_config.ini is present and enabled">
+        Open `doorstop_config.ini` and confirm:
+
+        ```ini
+        [General]
+        enabled = true
+        target_assembly = BepInEx\core\BepInEx.Unity.Mono.Preloader.dll
+        ```
+
+        For IL2CPP games, `target_assembly` should point to `BepInEx\core\BepInEx.Unity.IL2CPP.dll`.
+      </Step>
+      <Step title="Check for antivirus interference">
+        Security software sometimes blocks or quarantines `winhttp.dll` because it is a proxy DLL that intercepts library loading. Add the game folder to your antivirus exclusions and re-extract BepInEx.
+      </Step>
+      <Step title="On Linux and macOS, use the provided shell script">
+        On Unix-like systems, Doorstop works via `LD_PRELOAD` / `DYLD_INSERT_LIBRARIES`. You must launch the game through `run_bepinex.sh` rather than running the executable directly:
+
+        ```bash
+        chmod +x run_bepinex.sh
+        ./run_bepinex.sh ./GameName
+        ```
+
+        Steam users should set the launch option to:
+
+        ```bash
+        "/path/to/game/run_bepinex.sh" %command%
+        ```
+      </Step>
+    </Steps>
+  </Accordion>
+
+  <Accordion title="No LogOutput.log created">
+    If `BepInEx/LogOutput.log` is not created after running the game, BepInEx did not initialize at all. This usually means Doorstop did not inject successfully.
+
+    <Steps>
+      <Step title="Confirm Doorstop is loading">
+        On Windows, if there is no log file, `winhttp.dll` was not picked up. Check that it exists in the game root and that no other mod or launcher has already placed a different `winhttp.dll` there.
+      </Step>
+      <Step title="Look for a preloader emergency log">
+        If BepInEx started but crashed during the preloader phase, look for a file named `preloader_YYYYMMDD_HHmmss_fff.log` in the game root folder. This file contains the fatal exception that prevented normal log initialization.
+      </Step>
+      <Step title="Check file permissions">
+        BepInEx must be able to write to the game folder. On Linux and macOS, check that the game directory is writable by your user. On Windows, avoid installing games into `C:\Program Files\` unless you run as administrator.
+      </Step>
+      <Step title="Confirm you are using the right BepInEx build for your game">
+        Unity Mono and IL2CPP games require different BepInEx builds. Using a Mono build on an IL2CPP game (or vice versa) will cause silent failures. Check the game's `GameName_Data/il2cpp_data/` folder — if it exists, the game is IL2CPP.
+      </Step>
+    </Steps>
+  </Accordion>
+
+  <Accordion title="Plugins not loading">
+    If BepInEx starts (you can see the BepInEx header in `LogOutput.log`) but your plugins do not run, check the following:
+
+    <Steps>
+      <Step title="Verify the plugin is in the correct folder">
+        Plugin DLLs must be placed in `BepInEx/plugins/`. Subdirectories are supported. The file must have a `.dll` extension.
+
+        ```
+        BepInEx/
+        └── plugins/
+            ├── MyPlugin.dll
+            └── SomeOtherPlugin/
+                └── SomeOtherPlugin.dll
+        ```
+      </Step>
+      <Step title="Check LogOutput.log for loading errors">
+        Search the log for the plugin's assembly name. A successful load looks like:
+
+        ```
+        [Info   :   BepInEx] Loading [MyPlugin 1.0.0]
+        ```
+
+        If you see nothing for your plugin, it was either not discovered (wrong folder) or filtered out due to a dependency issue.
+      </Step>
+      <Step title="Confirm the plugin targets the correct runtime">
+        A plugin compiled for Unity Mono will not load on an IL2CPP game and will typically produce a load error. Ensure your plugin targets the same BepInEx runtime as the game.
+      </Step>
+      <Step title="Check that the plugin class is marked with [BepInPlugin]">
+        The chainloader only discovers types decorated with the `[BepInPlugin]` attribute. If the attribute is missing, the DLL is present but no plugin type is found.
+      </Step>
+    </Steps>
+  </Accordion>
+
+  <Accordion title='"Plugin has missing dependencies" error'>
+    BepInEx resolves plugin dependencies declared with `[BepInDependency]` before loading. If a required plugin or version is absent, the dependent plugin is skipped.
+
+    In `LogOutput.log` you will see a message similar to:
+
+    ```
+    [Warning :   BepInEx] Could not load [MyPlugin 1.0.0] because it has missing dependencies: SomeDependency (needs >=2.0.0)
+    ```
+
+    <Steps>
+      <Step title="Install the missing dependency">
+        Download and place the dependency plugin in `BepInEx/plugins/`. Check the plugin's documentation or its GitHub page for the correct version.
+      </Step>
+      <Step title="Check for version mismatches">
+        If the dependency is present but the version is too old, update it. The required version range is declared in the plugin's `[BepInDependency]` attribute and shown in the log message.
+      </Step>
+      <Step title="Check for circular dependencies">
+        Two plugins that each declare the other as a dependency will both fail to load. This is a bug in one or both plugins and must be resolved by the plugin authors.
+      </Step>
+    </Steps>
+  </Accordion>
+
+  <Accordion title="IL2CPP-specific issues">
+    IL2CPP games present additional challenges because the original C# code is compiled to native code and type information must be reconstructed at runtime using [Cpp2IL](https://github.com/SamboyCoding/Cpp2IL) and [Il2CppInterop](https://github.com/BepInEx/Il2CppInterop).
+
+    <Warning>
+      IL2CPP support in BepInEx 6 is still under active development. Expect rough edges and check the [BepInEx Discord](https://discord.gg/MpFEDAg) for game-specific guidance.
+    </Warning>
+
+    <Steps>
+      <Step title="Confirm you are using the IL2CPP build of BepInEx">
+        The IL2CPP build includes `BepInEx/core/BepInEx.Unity.IL2CPP.dll` and a `dotnet/` directory. If those are missing, you have the Mono build.
+      </Step>
+      <Step title="Check that CoreCLR is configured correctly">
+        IL2CPP BepInEx runs on .NET CoreCLR. In `doorstop_config.ini`, confirm:
+
+        ```ini
+        [Il2Cpp]
+        coreclr_path = dotnet\coreclr.dll
+        corlib_dir = dotnet
+        ```
+
+        Both paths must point to the `dotnet/` folder that ships with the IL2CPP BepInEx package.
+      </Step>
+      <Step title="Look for Cpp2IL errors in the log">
+        Cpp2IL reconstructs IL from the native `GameAssembly.dll`. If this step fails, no Il2CppInterop types are available and no plugins can load. Search the log for `Cpp2IL` or `Il2CppInterop` error lines.
+      </Step>
+      <Step title="Check macOS and Linux IL2CPP support status">
+        As of BepInEx 6, IL2CPP is only supported on Windows and Linux (x64). macOS IL2CPP support is not available. See the [platform compatibility](/user-guide/platform-compatibility) page for the current support matrix.
+      </Step>
+    </Steps>
+  </Accordion>
+
+  <Accordion title="Log file location and reading it effectively">
+    The disk log is written to `BepInEx/LogOutput.log` relative to the game root. By default, each launch overwrites the previous log. To keep old logs, set `AppendLog = true` in `BepInEx/config/BepInEx.cfg` under `[Logging.Disk]`.
+
+    When reading the log, look for these landmark lines to orient yourself:
+
+    | Line | Meaning |
+    |---|---|
+    | `[Message :   BepInEx] BepInEx 6.x.x - ...` | BepInEx version header; confirms BepInEx loaded |
+    | `[Info    :   BepInEx] Running under Unity X.Y.Z` | Detected Unity version |
+    | `[Message :   BepInEx] Preloader started` | Assembly patching phase began |
+    | `[Message :   BepInEx] Preloader finished` | Assembly patching completed successfully |
+    | `[Message :   BepInEx] Chainloader started` | Plugin loading phase began |
+    | `[Info    :   BepInEx] Loading [PluginName 1.0.0]` | A specific plugin is being loaded |
+    | `[Message :   BepInEx] Chainloader startup complete` | All plugins loaded |
+
+    Any `[Error]` or `[Fatal]` entries after these landmarks point directly to the problem.
+
+    <Tip>
+      Use your text editor's search to find `[Error` or `[Fatal` in `LogOutput.log` instead of reading the entire file.
+    </Tip>
+  </Accordion>
+</AccordionGroup>

@@ -1,0 +1,128 @@
+---
+title: "Platform compatibility"
+description: "Supported operating systems and architectures for each BepInEx runtime target: Unity Mono, Unity IL2CPP, and .NET/XNA."
+---
+
+BepInEx supports three distinct runtime targets, each with its own compatibility profile. Choosing the wrong build for your game is one of the most common installation mistakes — use this page to identify the correct one.
+
+## Compatibility matrix
+
+|  | Windows | macOS | Linux | ARM |
+|---|---|---|---|---|
+| **Unity Mono** | Supported | Supported | Supported | Not supported |
+| **Unity IL2CPP** | Supported | Not supported | Supported | Not supported |
+| **.NET / XNA** | Supported | Mono only | Mono only | Not available |
+
+<Note>
+  Only Unity Mono has stable releases. Unity IL2CPP support is present in BepInEx 6 bleeding-edge builds but remains under active development. .NET/XNA support targets desktop Windows natively; macOS and Linux require Mono.
+</Note>
+
+## Runtime targets explained
+
+### Unity Mono
+
+Unity Mono games ship with the Mono runtime embedded in the game executable. BepInEx injects into the process using [UnityDoorstop](https://github.com/NeighTools/UnityDoorstop), which loads `BepInEx.Unity.Mono.Preloader.dll` before any game code runs.
+
+Managed assemblies (`Assembly-CSharp.dll` and friends) are available directly on disk in `GameName_Data/Managed/`. Plugins can reference these assemblies and use Harmony or Mono.Cecil to patch game code at runtime.
+
+**How to identify a Mono game:** The `GameName_Data/Managed/` folder contains `Assembly-CSharp.dll` as a readable .NET assembly.
+
+Unity Mono is the most widely supported target and is the only one with stable BepInEx releases.
+
+### Unity IL2CPP
+
+IL2CPP games have their C# game logic compiled ahead-of-time to native machine code. The `GameName_Data/Managed/` folder is absent; instead, a single large native binary (`GameAssembly.dll` on Windows, `GameAssembly.so` on Linux) contains all the compiled game code.
+
+BepInEx supports IL2CPP via [Cpp2IL](https://github.com/SamboyCoding/Cpp2IL), which reconstructs IL from the native binary, and [Il2CppInterop](https://github.com/BepInEx/Il2CppInterop), which generates interop assemblies so plugins can call game types. The injector itself runs on .NET CoreCLR (included in the IL2CPP BepInEx package in the `dotnet/` directory).
+
+**How to identify an IL2CPP game:** The `GameName_Data/il2cpp_data/` folder is present, and there is a `GameAssembly.dll` (Windows) or `GameAssembly.so` (Linux) in the game root.
+
+<Warning>
+  IL2CPP support on macOS is not available in any current BepInEx release. Attempting to use an IL2CPP BepInEx build on macOS will fail.
+</Warning>
+
+### .NET / XNA
+
+BepInEx supports non-Unity games built on the .NET Framework or runtimes such as XNA, FNA, and MonoGame. On Windows, these games run on the native .NET Framework. On macOS and Linux, these games typically run on Mono.
+
+Native AOT and .NET NativeAOT published games are not supported.
+
+## Platform notes
+
+### Windows
+
+Windows is the primary supported platform for all three runtime targets. Both x86 (32-bit) and x64 (64-bit) executables are supported. BepInEx uses `winhttp.dll` as the Doorstop proxy on Windows — it sits next to the game executable and is loaded automatically by the Windows DLL search order.
+
+<Note>
+  BepInEx detects Wine automatically at startup (by checking for the `wine_get_version` export in `ntdll.dll`) and logs the Wine version. If you are running a Windows game under Wine or Proton on Linux, use the **Windows** BepInEx build, not the Linux build.
+</Note>
+
+### macOS
+
+Unity Mono games are supported on macOS. On Apple Silicon (M-series) Macs, the `run_bepinex.sh` script detects ARM and passes `-e DYLD_INSERT_LIBRARIES` explicitly to `arch` so that `DYLD_INSERT_LIBRARIES` is not stripped when switching architecture.
+
+**macOS SIP (System Integrity Protection):** SIP restricts the use of `DYLD_INSERT_LIBRARIES` for system-protected executables. Unity games installed from Steam or the App Store may be affected. If BepInEx does not inject on macOS, check whether SIP is blocking `DYLD_INSERT_LIBRARIES`:
+
+```bash
+# Check if SIP is enabled
+csrutil status
+```
+
+Games installed through Steam are typically not SIP-protected. Games from the Mac App Store may be, in which case BepInEx cannot inject without disabling SIP — which Apple does not recommend and is outside the scope of BepInEx support.
+
+IL2CPP games on macOS are **not supported**. There is no current timeline for macOS IL2CPP support.
+
+### Linux
+
+Unity Mono and Unity IL2CPP (x64) are both supported on Linux. The Doorstop mechanism uses `LD_PRELOAD` to inject `libdoorstop.so` before the game starts. You must launch via `run_bepinex.sh`:
+
+```bash
+chmod +x run_bepinex.sh
+./run_bepinex.sh ./GameName.x86_64
+```
+
+**Steam on Linux:** When the game is launched by Steam, the script detects the `SteamLaunch` argument and re-executes through Steam's bootstrapper to correctly delay adding `libdoorstop.so` to `LD_PRELOAD`. Set the Steam launch option to:
+
+```bash
+"/absolute/path/to/game/run_bepinex.sh" %command%
+```
+
+**Steam Deck:** The Steam Deck runs SteamOS (Linux x64). BepInEx for Linux (Unity Mono or IL2CPP) works on Steam Deck in the same way as any other Linux system. Use Desktop Mode to configure the launch option above.
+
+**Proton/Wine on Linux:** If the game executable is a Windows PE binary (`.exe`), the `run_bepinex.sh` script will detect this and exit with an error, telling you to use the Windows BepInEx build with Proton instead.
+
+### ARM
+
+ARM is not currently supported for either Unity Mono or Unity IL2CPP. The `PlatformUtils` preloader detects ARM processors by checking the `machine` field from `uname` (Linux/macOS) or PE machine type (Windows), but no ARM-specific Doorstop builds ship with BepInEx.
+
+<Note>
+  If you need ARM support (for example, running Unity games on a Raspberry Pi or an Android device under Linux userspace), check the [BepInEx Discord](https://discord.gg/MpFEDAg) for community-maintained builds. ARM is tracked as a future improvement but has no scheduled release.
+</Note>
+
+## Choosing the right download
+
+Use this decision tree to select the correct BepInEx package:
+
+<Steps>
+  <Step title="Check whether the game is Unity or not">
+    If the game uses Unity, look for a `GameName_Data/` folder next to the executable. If there is no such folder, the game is likely a .NET/XNA title — use the .NET build.
+  </Step>
+  <Step title="Determine if the game is Mono or IL2CPP">
+    - **Mono:** `GameName_Data/Managed/Assembly-CSharp.dll` exists and is a readable .NET assembly.
+    - **IL2CPP:** `GameName_Data/il2cpp_data/` exists and `GameAssembly.dll` (or `GameAssembly.so`) is present in the game root.
+  </Step>
+  <Step title="Select the build for your OS">
+    Download the matching build from [GitHub Releases](https://github.com/BepInEx/BepInEx/releases):
+
+    | Game type | OS | Package name pattern |
+    |---|---|---|
+    | Unity Mono | Windows x64 | `BepInEx_win_x64_*.zip` |
+    | Unity Mono | Windows x86 | `BepInEx_win_x86_*.zip` |
+    | Unity Mono | macOS | `BepInEx_macos_x64_*.zip` |
+    | Unity Mono | Linux x64 | `BepInEx_linux_x64_*.zip` |
+    | Unity IL2CPP | Windows x64 | `BepInEx_win_x64_*.zip` (IL2CPP build) |
+    | Unity IL2CPP | Linux x64 | `BepInEx_linux_x64_*.zip` (IL2CPP build) |
+
+    IL2CPP builds are only available as [bleeding-edge builds](https://builds.bepinex.dev/projects/bepinex_be) and are not part of the stable release channel.
+  </Step>
+</Steps>

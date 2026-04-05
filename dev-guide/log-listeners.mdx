@@ -1,0 +1,197 @@
+---
+title: "Log listeners"
+description: "Understand the built-in log listeners and learn how to implement a custom ILogListener to route BepInEx log output to any destination."
+---
+
+A log listener receives log events from the `Logger` broker and decides what to do with them — write to a file, send to a remote endpoint, display in an in-game overlay, and so on. Every registered listener is checked on each log event; events are delivered only when the event's level matches the listener's filter.
+
+## `ILogListener` interface
+
+```csharp
+public interface ILogListener : IDisposable
+{
+    // Bitmask of log levels this listener wants to receive.
+    // Logger uses this to avoid delivering events the listener will discard.
+    LogLevel LogLevelFilter { get; }
+
+    // Called for each log event whose Level matches LogLevelFilter.
+    // Use eventArgs — not sender — to read the message details.
+    void LogEvent(object sender, LogEventArgs eventArgs);
+}
+```
+
+<Note>
+  `LogLevelFilter` is read once when the listener is added to `Logger.Listeners`. Changing it afterwards has no effect on `Logger.ListenedLogLevels`, so set it to the correct value before registering.
+</Note>
+
+## `LogEventArgs`
+
+Every `LogEvent` call receives a `LogEventArgs` with three properties:
+
+<ResponseField name="Data" type="object">
+  The logged value. Call `ToString()` to render it as a string. The source passed this object directly to `Log(level, data)`.
+</ResponseField>
+
+<ResponseField name="Level" type="LogLevel">
+  The log level flags attached to this event (e.g. `LogLevel.Warning`).
+</ResponseField>
+
+<ResponseField name="Source" type="ILogSource">
+  The `ILogSource` that emitted the event. Use `Source.SourceName` for the human-readable label shown in log output.
+</ResponseField>
+
+`LogEventArgs.ToString()` produces the standard BepInEx log line format:
+
+```
+[Warning:   MyPlugin]  Config value out of range, using default.
+```
+
+`LogEventArgs.ToStringLine()` appends a platform newline, suitable for writing directly to a `TextWriter`.
+
+## Built-in listeners
+
+### `ConsoleLogListener`
+
+Writes log output to the BepInEx console window. The active levels are controlled by the `Logging.Console` → `LogLevels` config entry in `BepInEx.cfg`.
+
+**Default filter:** `Fatal | Error | Warning | Message | Info`
+
+Each level is colored using `LogLevel.GetConsoleColor()`:
+
+| Level | Console color |
+|-------|--------------|
+| `Fatal` | Red |
+| `Error` | DarkRed |
+| `Warning` | Yellow |
+| `Message` | White |
+| `Info` | DarkGray |
+| `Debug` | DarkGray |
+
+### `DiskLogListener`
+
+Writes log output to a file under the BepInEx root directory. BepInEx registers one targeting `LogOutput.log` at startup.
+
+**Constructor parameters:**
+
+<ParamField path="localPath" type="string" required>
+  Path relative to the BepInEx root directory (e.g. `"LogOutput.log"`).
+</ParamField>
+
+<ParamField path="displayedLogLevel" type="LogLevel" default="LogLevel.Info">
+  Bitmask of levels to write. Acts as both `LogLevelFilter` and a secondary gate inside `LogEvent`.
+</ParamField>
+
+<ParamField path="appendLog" type="bool" default="false">
+  When `true`, appends to an existing file instead of recreating it on each launch.
+</ParamField>
+
+<ParamField path="delayedFlushing" type="bool" default="true">
+  When `true`, flushes to disk every two seconds rather than after every write. Set to `false` when debugging crashes to ensure all output is persisted before a hard abort.
+</ParamField>
+
+<ParamField path="fileLimit" type="int" default="5">
+  Maximum number of log files to attempt to open. If the primary path is locked (e.g. by a previous crashed instance), `DiskLogListener` tries `LogOutput.1.log`, `LogOutput.2.log`, and so on up to this limit.
+</ParamField>
+
+You can also filter out specific sources by adding their names to `DiskLogListener.BlacklistedSources`:
+
+```csharp
+DiskLogListener.BlacklistedSources.Add("HarmonyX");
+```
+
+## `Logger.Listeners` collection
+
+Add your listener to `Logger.Listeners` to start receiving events. Remove it when you no longer need it, and call `Dispose()` to release any resources.
+
+```csharp
+var myListener = new MyLogListener();
+Logger.Listeners.Add(myListener);
+
+// Later, when done:
+Logger.Listeners.Remove(myListener);
+myListener.Dispose();
+```
+
+## Implementing a custom listener
+
+The example below implements a minimal listener that writes `Warning` and above to an in-memory ring buffer, useful for surfacing recent errors in an in-game debug overlay.
+
+```csharp RingBufferLogListener.cs
+using System;
+using System.Collections.Generic;
+using BepInEx.Logging;
+
+public class RingBufferLogListener : ILogListener
+{
+    private readonly Queue<string> _buffer;
+    private readonly int _capacity;
+
+    public RingBufferLogListener(int capacity = 100)
+    {
+        _capacity = capacity;
+        _buffer = new Queue<string>(capacity);
+    }
+
+    // Only subscribe to Warning, Error, and Fatal to keep the buffer small.
+    public LogLevel LogLevelFilter => LogLevel.Warning | LogLevel.Error | LogLevel.Fatal;
+
+    public void LogEvent(object sender, LogEventArgs eventArgs)
+    {
+        // eventArgs.ToString() produces "[Warning:   MyPlugin] message"
+        var line = eventArgs.ToString();
+
+        if (_buffer.Count >= _capacity)
+            _buffer.Dequeue();
+
+        _buffer.Enqueue(line);
+    }
+
+    /// <summary>Returns a snapshot of the buffered lines, oldest first.</summary>
+    public IReadOnlyList<string> GetLines() => new List<string>(_buffer);
+
+    public void Dispose()
+    {
+        _buffer.Clear();
+    }
+}
+```
+
+Register it from your plugin's `Awake()`:
+
+```csharp MyPlugin.cs
+[BepInPlugin("com.example.myplugin", "My Plugin", "1.0.0")]
+public class MyPlugin : BaseUnityPlugin
+{
+    private RingBufferLogListener _recentErrors;
+
+    private void Awake()
+    {
+        _recentErrors = new RingBufferLogListener(capacity: 50);
+        Logger.Listeners.Add(_recentErrors);
+
+        Logger.LogInfo("Plugin loaded.");
+    }
+
+    private void OnGUI()
+    {
+        // Render the last few warnings/errors on screen.
+        var lines = _recentErrors.GetLines();
+        for (int i = 0; i < lines.Count; i++)
+            GUILayout.Label(lines[i]);
+    }
+
+    private void OnDestroy()
+    {
+        Logger.Listeners.Remove(_recentErrors);
+        _recentErrors.Dispose();
+    }
+}
+```
+
+<Tip>
+  If your listener writes to an external resource (file, socket, database), implement `Dispose()` to flush and close that resource. BepInEx does not call `Dispose()` automatically — you are responsible for cleanup.
+</Tip>
+
+<Warning>
+  `LogEvent` is called on whichever thread raised the original log event. If you share state between `LogEvent` and other code, make sure to synchronize access.
+</Warning>

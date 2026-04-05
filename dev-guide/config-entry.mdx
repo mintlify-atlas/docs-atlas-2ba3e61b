@@ -1,0 +1,268 @@
+---
+title: "ConfigEntry"
+description: "ConfigEntry<T> is the typed handle to a single setting. It exposes the live value, the setting's metadata, and a per-entry change event."
+---
+
+`ConfigEntry<T>` is returned by `ConfigFile.Bind<T>` and is the object you keep a reference to in your plugin. It holds the current value, the default value, and all metadata associated with the setting.
+
+## `ConfigEntry<T>`
+
+### Properties
+
+<ResponseField name="Value" type="T">
+  The current value of the setting. Reading this property returns the live value. Writing it validates the new value against any `AcceptableValueBase` constraint, updates the entry, and (if `SaveOnConfigSet` is `true`) saves the config file to disk.
+
+  ```csharp
+  // Read
+  float speed = _cfgSpeed.Value;
+
+  // Write — triggers validation, SettingChanged event, and auto-save
+  _cfgSpeed.Value = 7.5f;
+  ```
+</ResponseField>
+
+<ResponseField name="DefaultValue" type="object">
+  The value supplied as `defaultValue` when `Bind` was called. Read-only. Used by config editors and written as a comment in the `.cfg` file.
+
+  ```csharp
+  Logger.LogInfo($"Default speed: {_cfgSpeed.DefaultValue}");
+  ```
+</ResponseField>
+
+<ResponseField name="BoxedValue" type="object">
+  An untyped `object` accessor for the same underlying value as `Value`. Useful when iterating over entries of mixed types via `ConfigFile.Values`. Setting `BoxedValue` performs the same validation and save as setting `Value`.
+
+  ```csharp
+  foreach (ConfigEntryBase entry in Config.Values)
+  {
+      Logger.LogInfo($"{entry.Definition.Key} = {entry.BoxedValue}");
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="Definition" type="ConfigDefinition">
+  The `ConfigDefinition` that identifies this entry by its `Section` and `Key`. See [ConfigDefinition](#configdefinition) below.
+</ResponseField>
+
+<ResponseField name="Description" type="ConfigDescription">
+  The `ConfigDescription` attached at bind time, containing the human-readable description string and any `AcceptableValueBase` validator. See [ConfigDescription](#configdescription) below.
+</ResponseField>
+
+<ResponseField name="SettingType" type="Type">
+  The `System.Type` of `T`. Useful for generic tooling that inspects entries without knowing the concrete type.
+</ResponseField>
+
+<ResponseField name="ConfigFile" type="ConfigFile">
+  The `ConfigFile` this entry belongs to.
+</ResponseField>
+
+### Events
+
+#### `SettingChanged`
+
+Fired on the `ConfigEntry<T>` itself (in addition to the file-level `ConfigFile.SettingChanged`) whenever `Value` or `BoxedValue` changes.
+
+```csharp
+_cfgSpeed.SettingChanged += (sender, args) =>
+{
+    Logger.LogInfo($"Speed is now {_cfgSpeed.Value}");
+};
+```
+
+<Note>
+The event is only fired when the value actually changes. Assigning the same value that is already stored does not fire the event.
+</Note>
+
+### Serialization helpers
+
+<ResponseField name="GetSerializedValue()" type="string">
+  Converts the current value to its string representation as it would appear in the `.cfg` file.
+
+  ```csharp
+  string raw = _cfgSpeed.GetSerializedValue(); // e.g. "7.5"
+  ```
+</ResponseField>
+
+<ResponseField name="SetSerializedValue(string value)" type="void">
+  Parses a string and applies it as the new value. Used internally by `Reload()`. If parsing fails, a warning is logged and the value is left unchanged.
+
+  ```csharp
+  _cfgSpeed.SetSerializedValue("12.3");
+  ```
+</ResponseField>
+
+---
+
+## `ConfigDefinition`
+
+`ConfigDefinition` is an immutable value type that uniquely identifies a setting within a config file by its section and key.
+
+<ResponseField name="Section" type="string">
+  The group the setting belongs to. Maps to an `[INI section]` header. Case-sensitive.
+</ResponseField>
+
+<ResponseField name="Key" type="string">
+  The name of the setting within its section. Case-sensitive.
+</ResponseField>
+
+```csharp
+var def = new ConfigDefinition("Movement", "WalkSpeed");
+Console.WriteLine(def.ToString()); // "Movement.WalkSpeed"
+```
+
+**Character restrictions.** Neither `Section` nor `Key` can:
+- Start or end with whitespace.
+- Contain any of: `=` `\n` `\t` `\` `"` `'` `[` `]`
+
+Passing an invalid string throws `ArgumentException` at construction time.
+
+`ConfigDefinition` implements value equality — two instances with the same section and key are considered equal and can be used interchangeably as dictionary keys.
+
+---
+
+## `ConfigDescription`
+
+`ConfigDescription` bundles the human-readable description with an optional value constraint.
+
+<ParamField path="description" type="string" required>
+  Text describing the setting. Written as `##` comment lines in the `.cfg` file. Cannot be `null` (use an empty string if no description is needed).
+</ParamField>
+
+<ParamField path="acceptableValues" type="AcceptableValueBase">
+  Optional. An `AcceptableValueRange<T>` or `AcceptableValueList<T>` that constrains what values are valid. When a value outside the constraint is assigned, it is automatically clamped or reset. Also written as a `#` comment in the `.cfg` file.
+</ParamField>
+
+<ParamField path="tags" type="object[]">
+  Optional. Arbitrary objects attached to the setting. Config editors can inspect these to add UI-level functionality (e.g., marking a setting as advanced or adding a custom renderer).
+</ParamField>
+
+```csharp
+var desc = new ConfigDescription(
+    "Damage multiplier applied to all outgoing attacks.",
+    new AcceptableValueRange<float>(0.1f, 10f)
+);
+```
+
+`ConfigDescription.Empty` is a pre-built instance with an empty description and no constraints, used as the default when `null` is passed to `Bind`.
+
+---
+
+## Acceptable value validators
+
+Validators enforce that the value stored in a `ConfigEntry<T>` stays within a defined set of legal values. They are subclasses of `AcceptableValueBase` and are passed as the second argument to `ConfigDescription`.
+
+When an out-of-range value is assigned, it is **clamped** (not rejected) to the nearest acceptable value. The constraint is also written into the `.cfg` file as a comment so users know what values are valid.
+
+### `AcceptableValueRange<T>`
+
+Restricts the value to a closed numeric interval `[min, max]`. `T` must implement `IComparable`.
+
+<ParamField path="minValue" type="T" required>
+  The lowest acceptable value (inclusive). Must be strictly less than `maxValue`.
+</ParamField>
+
+<ParamField path="maxValue" type="T" required>
+  The highest acceptable value (inclusive).
+</ParamField>
+
+If the assigned value is below `minValue`, it is clamped to `minValue`. If it is above `maxValue`, it is clamped to `maxValue`.
+
+```csharp
+// Integer range
+ConfigEntry<int> cfgDifficulty = Config.Bind(
+    "Gameplay", "Difficulty", 1,
+    new ConfigDescription(
+        "Difficulty level.",
+        new AcceptableValueRange<int>(1, 3)
+    )
+);
+
+cfgDifficulty.Value = 5; // Clamped to 3
+
+// Float range
+ConfigEntry<float> cfgVolume = Config.Bind(
+    "Audio", "Volume", 1.0f,
+    new ConfigDescription(
+        "Master volume (0 = silent, 1 = full).",
+        new AcceptableValueRange<float>(0f, 1f)
+    )
+);
+```
+
+The `.cfg` file comment produced looks like:
+
+```ini
+# Acceptable value range: From 1 to 3
+```
+
+### `AcceptableValueList<T>`
+
+Restricts the value to a fixed set of allowed values. `T` must implement `IEquatable<T>`.
+
+<ParamField path="acceptableValues" type="T[]" required>
+  One or more allowed values. At least one value is required. If the assigned value is not in the list, it is reset to `acceptableValues[0]` (the first element).
+</ParamField>
+
+```csharp
+// String whitelist
+ConfigEntry<string> cfgMode = Config.Bind(
+    "Gameplay", "Mode", "Normal",
+    new ConfigDescription(
+        "Game mode to start in.",
+        new AcceptableValueList<string>("Easy", "Normal", "Hard", "Nightmare")
+    )
+);
+
+cfgMode.Value = "Invalid"; // Reset to "Easy" (first element)
+```
+
+```csharp
+// Integer whitelist
+ConfigEntry<int> cfgLives = Config.Bind(
+    "Gameplay", "StartingLives", 3,
+    new ConfigDescription(
+        "Number of lives at the start of a run.",
+        new AcceptableValueList<int>(1, 3, 5, 10)
+    )
+);
+```
+
+The `.cfg` file comment produced looks like:
+
+```ini
+# Acceptable values: Easy, Normal, Hard, Nightmare
+```
+
+<Tip>
+For enum types, BepInEx writes all enum member names as the acceptable values comment automatically — you do not need `AcceptableValueList` just to document an enum. Use `AcceptableValueList` when you want to restrict an enum or string to a **subset** of its possible values.
+</Tip>
+
+---
+
+## Custom validator
+
+You can implement your own validator by subclassing `AcceptableValueBase`:
+
+```csharp
+public class AcceptableEvenInt : AcceptableValueBase
+{
+    public AcceptableEvenInt() : base(typeof(int)) { }
+
+    public override object Clamp(object value)
+    {
+        int v = (int)value;
+        return v % 2 == 0 ? v : v - 1; // round down to nearest even
+    }
+
+    public override bool IsValid(object value) => (int)value % 2 == 0;
+
+    public override string ToDescriptionString() => "# Acceptable values: even integers";
+}
+
+ConfigEntry<int> cfgEven = Config.Bind(
+    "Demo", "EvenNumber", 4,
+    new ConfigDescription("Must be an even integer.", new AcceptableEvenInt())
+);
+
+cfgEven.Value = 7; // Clamped to 6
+```

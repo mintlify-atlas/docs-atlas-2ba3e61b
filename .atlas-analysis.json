@@ -1,0 +1,109 @@
+{
+  "projectType": "framework",
+  "projectName": "BepInEx",
+  "projectDescription": "A plugin and modding framework for Unity Mono, IL2CPP, and .NET/XNA games that enables loading and managing game mods via a preloader patcher and plugin system.",
+  "theme": "aspen",
+  "primaryColor": "#242b2c",
+  "lightColor": "#6a6a6d",
+  "darkColor": "#ebeaea",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "User Guide",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "user-guide/introduction",
+              "user-guide/installation",
+              "user-guide/configuration"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "user-guide/troubleshooting",
+              "user-guide/platform-compatibility"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Developer Guide",
+        "groups": [
+          {
+            "group": "Plugin Development",
+            "pages": [
+              "dev-guide/plugin-quickstart",
+              "dev-guide/plugin-metadata",
+              "dev-guide/plugin-dependencies"
+            ]
+          },
+          {
+            "group": "Configuration API",
+            "pages": [
+              "dev-guide/configuration-overview",
+              "dev-guide/config-file",
+              "dev-guide/config-entry"
+            ]
+          },
+          {
+            "group": "Logging API",
+            "pages": [
+              "dev-guide/logging-overview",
+              "dev-guide/log-sources",
+              "dev-guide/log-listeners"
+            ]
+          },
+          {
+            "group": "Preloader Patchers",
+            "pages": [
+              "dev-guide/patchers-overview",
+              "dev-guide/writing-a-patcher"
+            ]
+          },
+          {
+            "group": "Advanced Topics",
+            "pages": [
+              "dev-guide/il2cpp-plugins",
+              "dev-guide/harmony-patching",
+              "dev-guide/chainloader"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Plugin loading system with dependency resolution and load order management",
+    "Preloader assembly patcher system for modifying game assemblies before load",
+    "Persistent INI-based configuration API with type-safe bindings",
+    "Structured logging system with pluggable listeners (console, disk, custom)",
+    "Support for Unity Mono, Unity IL2CPP, and .NET/XNA game runtimes",
+    "Cross-platform support (Windows, Linux, macOS)",
+    "Doorstop-based injection requiring no game file modification",
+    "HarmonyX integration for method patching"
+  ],
+  "publicApiSurface": [
+    "BepInPlugin attribute (GUID, Name, Version)",
+    "BepInDependency attribute (DependencyGUID, Flags, VersionRange)",
+    "BepInIncompatibility attribute (IncompatibilityGUID)",
+    "BepInProcess attribute (ProcessName)",
+    "BaseUnityPlugin (Unity Mono plugin base class)",
+    "BasePlugin (Unity IL2CPP plugin base class)",
+    "BasePatcher (preloader patcher base class)",
+    "ConfigFile.Bind<T>(section, key, defaultValue, description)",
+    "ConfigEntry<T> (typed config entry with Value, SettingChanged)",
+    "Logger.CreateLogSource(sourceName)",
+    "ManualLogSource.LogInfo/LogWarning/LogError/LogDebug/LogFatal",
+    "ILogListener interface",
+    "PatcherPluginInfoAttribute (GUID, Name, Version)",
+    "TargetAssemblyAttribute (targetAssembly)",
+    "TargetTypeAttribute (targetAssembly, targetType)",
+    "MetadataHelper.GetMetadata(pluginType)",
+    "Paths (BepInExRootPath, PluginPath, ConfigPath, etc.)",
+    "BaseChainloader<TPlugin>.Plugins dictionary",
+    "BaseChainloader<TPlugin>.PluginLoaded event",
+    "AssemblyPatcher.PatchAndLoad()"
+  ]
+}

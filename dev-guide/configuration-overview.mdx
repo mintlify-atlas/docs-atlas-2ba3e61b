@@ -1,0 +1,127 @@
+---
+title: "Configuration overview"
+description: "BepInEx provides a built-in configuration system that gives each plugin its own INI file with type-safe bindings and automatic persistence."
+---
+
+The configuration system handles reading and writing per-plugin `.cfg` files, serializing values to and from their string representations, and notifying your code when settings change at runtime. You do not need to manage file I/O yourself.
+
+## Config file location
+
+Each plugin's config file is stored at:
+
+```
+BepInEx/config/<PluginGUID>.cfg
+```
+
+The file is created automatically the first time a setting is bound and its value is saved (or when `Save()` is called explicitly). If the file does not exist when the plugin loads, BepInEx uses the default values you supply in code.
+
+## File format
+
+Config files use an INI-style format with sections, key-value pairs, and auto-generated comments:
+
+```ini
+## Settings file was created by plugin My Mod v1.0.0
+## Plugin GUID: com.example.mymod
+
+[General]
+
+## Enable or disable the plugin entirely.
+# Setting type: Boolean
+# Default value: true
+Enabled = true
+
+[Combat]
+
+## Multiplier applied to all outgoing damage.
+# Setting type: Single
+# Default value: 1
+# Acceptable value range: From 0.1 to 10
+DamageMultiplier = 1.5
+```
+
+Lines beginning with `##` are human-readable descriptions written by the config system. Lines beginning with `#` are metadata comments. Neither is parsed when loading the file.
+
+## Accessing config in a plugin
+
+Every plugin that inherits from `BaseUnityPlugin` (Unity Mono) or `BasePlugin` (Unity IL2CPP) exposes a `Config` property of type `ConfigFile`. This property is pre-configured with the plugin's GUID as the file path — you do not need to construct a `ConfigFile` yourself.
+
+```csharp
+[BepInPlugin("com.example.mymod", "My Mod", "1.0.0")]
+public class MyPlugin : BaseUnityPlugin
+{
+    private void Awake()
+    {
+        var enabled = Config.Bind("General", "Enabled", true, "Enable or disable the plugin.");
+        Logger.LogInfo($"Plugin enabled: {enabled.Value}");
+    }
+}
+```
+
+`Config.Bind` is the only method you need for the common case. It registers the setting, reads any existing value from disk, and returns a `ConfigEntry<T>` you can use throughout your plugin's lifetime.
+
+## Minimal example
+
+```csharp
+// Bind returns a ConfigEntry<T> that holds the live value.
+ConfigEntry<bool> cfgEnabled = Config.Bind(
+    "General",          // Section
+    "Enabled",          // Key
+    true,               // Default value
+    "Enable the plugin" // Description shown in the .cfg file
+);
+
+// Read the value anywhere:
+if (cfgEnabled.Value)
+{
+    // ...
+}
+
+// Write the value — the file is updated immediately when SaveOnConfigSet is true:
+cfgEnabled.Value = false;
+```
+
+## Supported types
+
+The following types have built-in serialization support and can be used as the type parameter for `Config.Bind<T>`:
+
+| Category        | Types                                                      |
+| --------------- | ---------------------------------------------------------- |
+| Boolean         | `bool`                                                     |
+| Integer         | `sbyte`, `byte`, `short`, `ushort`, `int`, `uint`, `long`, `ulong` |
+| Floating point  | `float`, `double`, `decimal`                               |
+| Text            | `string`                                                   |
+| Enums           | Any `enum` type                                            |
+
+Floating-point values are serialized using the invariant culture (`.` as the decimal separator) regardless of the OS locale.
+
+Enum values are serialized by name (e.g., `Warning`) and are parsed case-insensitively. Flags enums support comma-separated combinations (e.g., `Debug, Warning`).
+
+<Note>
+If you need to store a type that is not in the table above, register a custom converter with `TomlTypeConverter.AddConverter` before calling `Bind`.
+</Note>
+
+## Auto-save behaviour
+
+By default, `SaveOnConfigSet` is `true` on every `ConfigFile`. This means the file is written to disk every time a value changes. If you are updating many settings at once, you can disable auto-save temporarily and call `Save()` manually:
+
+```csharp
+Config.SaveOnConfigSet = false;
+
+cfgSpeed.Value = 2.0f;
+cfgDamage.Value = 1.5f;
+cfgEnabled.Value = true;
+
+Config.SaveOnConfigSet = true;
+Config.Save();
+```
+
+## Further reading
+
+<CardGroup cols={2}>
+  <Card title="ConfigFile" href="/dev-guide/config-file" icon="file">
+    Full API reference for `ConfigFile`, including constructors, `Bind` overloads, `Save`, `Reload`, and events.
+  </Card>
+  <Card title="ConfigEntry" href="/dev-guide/config-entry" icon="sliders">
+    Reference for `ConfigEntry<T>`, `ConfigDefinition`, `ConfigDescription`, and acceptable value validators.
+  </Card>
+</CardGroup>

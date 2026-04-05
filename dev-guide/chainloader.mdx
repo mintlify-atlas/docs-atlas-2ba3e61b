@@ -1,0 +1,199 @@
+---
+title: "Chainloader"
+description: "Understand how BepInEx discovers, orders, and loads plugins from the plugins directory."
+---
+
+## What the chainloader does
+
+The *chainloader* is the component responsible for finding all plugin DLL files in `BepInEx/plugins/`, resolving their dependencies, sorting them into the correct load order, and instantiating each plugin. It runs once on game startup and fires events as plugins are loaded.
+
+BepInEx provides an abstract base `BaseChainloader<TPlugin>` in `BepInEx.Core`. Concrete implementations — `UnityChainloader` for Mono builds and `IL2CPPChainloader` for IL2CPP builds — extend this base to handle the specifics of each runtime.
+
+## `BaseChainloader<TPlugin>` API
+
+```csharp
+public abstract class BaseChainloader<TPlugin>
+{
+    // Loaded plugins keyed by their GUID.
+    public Dictionary<string, PluginInfo> Plugins { get; }
+
+    // Error messages produced during dependency resolution and loading.
+    public List<string> DependencyErrors { get; }
+
+    // Fired once after each plugin finishes loading.
+    public event Action<PluginInfo> PluginLoaded;
+
+    // Fired once after all plugins have been loaded.
+    public event Action Finished;
+
+    // Sets up paths, creates the plugin directory, and initialises loggers.
+    public virtual void Initialize(string gameExePath = null);
+
+    // Discovers all plugins, resolves their load order, and loads them.
+    public virtual void Execute();
+
+    // Loads plugins from a specific set of directories.
+    // Useful for third-party loaders or meta-plugins.
+    public IList<PluginInfo> LoadPlugins(params string[] pluginsPaths);
+}
+```
+
+## The `PluginInfo` object
+
+Each discovered plugin is represented by a `PluginInfo` instance. After `Execute()` completes, every successfully loaded plugin has an entry in `Chainloader.PluginInfos` (the static accessor for the active chainloader's `Plugins` dictionary).
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `Metadata` | `BepInPlugin` | GUID, name, and version declared via `[BepInPlugin]`. |
+| `Instance` | `object` | The live plugin object. Set after the plugin loads. Cast to your plugin type or `BaseUnityPlugin` as needed. |
+| `Location` | `string` | Absolute path to the DLL file the plugin was loaded from. |
+| `Dependencies` | `IEnumerable<BepInDependency>` | Parsed `[BepInDependency]` attributes. |
+| `Incompatibilities` | `IEnumerable<BepInIncompatibility>` | Parsed `[BepInIncompatibility]` attributes. |
+| `TypeName` | `string` | Fully qualified name of the plugin class inside the assembly. |
+
+## Plugin discovery with `TypeLoader`
+
+`TypeLoader.FindPluginTypes` does the heavy lifting of scanning `BepInEx/plugins/` for valid plugins:
+
+<Steps>
+  <Step title="Enumerate DLLs">
+    `FindPluginTypes` recursively finds every `*.dll` in the search directory.
+  </Step>
+  <Step title="Hash and cache">
+    Each DLL is hashed. If the hash matches a cached entry from a previous run (stored in `BepInEx/cache/chainloader_typeloader.dat`), the cached metadata is reused — avoiding a full Cecil read on every startup.
+  </Step>
+  <Step title="Filter assemblies">
+    Assemblies that don't reference `BepInEx.Core` or don't use the `[BepInPlugin]` type are skipped immediately.
+  </Step>
+  <Step title="Inspect types">
+    For every type in a qualifying assembly, `ToPluginInfo` is called. It checks that the type is concrete, inherits from the plugin base, and has a valid `[BepInPlugin]` attribute with a legal GUID, non-null name, and parseable version.
+  </Step>
+  <Step title="Return results">
+    Valid `PluginInfo` objects are returned, grouped by assembly path.
+  </Step>
+</Steps>
+
+## Plugin load order algorithm
+
+After discovery, `ModifyLoadOrder` sorts plugins using a **topological sort** based on their `[BepInDependency]` declarations:
+
+1. Plugins are grouped by GUID. If two DLLs contain the same GUID, only the one with the highest version number is kept.
+2. Plugins with a matching `[BepInProcess]` filter that doesn't include the current executable are dropped.
+3. `[BepInIncompatibility]` checks run — if an incompatible plugin is in the load list, the plugin declaring the incompatibility is removed and an error is logged.
+4. The remaining plugins are topologically sorted so that every dependency loads before the plugin that requires it.
+
+```
+Plugin A (no deps)       → loads first
+Plugin B (depends on A)  → loads after A
+Plugin C (depends on B)  → loads last
+```
+
+### Circular dependencies
+
+The topological sort in `Utility.TopologicalSort` detects cycles. If plugin X depends on Y and Y depends on X, neither can be placed after the other. Both will appear in `DependencyErrors` and neither will load.
+
+### Missing and invalid dependencies
+
+If a plugin declares a hard dependency (`BepInDependency.DependencyFlags.HardDependency`) on a GUID that is not present or does not satisfy the required version range, the dependent plugin is skipped and an error is added to `DependencyErrors`. Any plugin that in turn depends on the skipped plugin is also skipped transitively.
+
+## Listening for plugin load events
+
+You can subscribe to `PluginLoaded` and `Finished` from inside another plugin. Both events are fired on the main thread.
+
+```csharp
+using BepInEx;
+using BepInEx.Unity.Mono;
+using BepInEx.Unity.Mono.Bootstrap;
+
+[BepInPlugin("com.example.observer", "Observer Plugin", "1.0.0")]
+public class ObserverPlugin : BaseUnityPlugin
+{
+    private void Awake()
+    {
+        var chainloader = UnityChainloader.Instance;
+
+        // Plugins loaded before this one are already in Plugins
+        Logger.LogInfo($"Already loaded: {chainloader.Plugins.Count} plugins");
+
+        // Subscribe to catch remaining plugins loading after this one
+        chainloader.PluginLoaded += OnPluginLoaded;
+        chainloader.Finished += OnAllPluginsLoaded;
+    }
+
+    private void OnPluginLoaded(PluginInfo info)
+    {
+        Logger.LogInfo($"Plugin loaded: {info.Metadata.GUID} v{info.Metadata.Version}");
+    }
+
+    private void OnAllPluginsLoaded()
+    {
+        Logger.LogInfo($"All plugins loaded. Total: {UnityChainloader.Instance.Plugins.Count}");
+    }
+}
+```
+
+<Note>
+If your plugin loads after the plugins you want to observe — which is common — `PluginLoaded` will not fire for them because they loaded before your plugin subscribed. Use `UnityChainloader.Instance.Plugins` to inspect already-loaded plugins, and `Finished` to run logic after the entire load sequence completes (it still fires even if your plugin missed individual `PluginLoaded` events).
+</Note>
+
+## Accessing the loaded plugin dictionary
+
+```csharp
+// Get the active chainloader instance
+var chainloader = UnityChainloader.Instance;
+
+// Check whether a specific plugin is loaded
+if (chainloader.Plugins.TryGetValue("com.example.otherplugin", out var info))
+{
+    Logger.LogInfo($"Found {info.Metadata.Name} at {info.Location}");
+    var otherPlugin = (OtherPlugin)info.Instance;
+}
+
+// Iterate all loaded plugins
+foreach (var (guid, pluginInfo) in chainloader.Plugins)
+    Logger.LogDebug($"{guid}: {pluginInfo.Metadata.Version}");
+```
+
+<Note>
+In BepInEx 6, access the loaded plugin dictionary via `UnityChainloader.Instance.Plugins` (Unity Mono) or `IL2CPPChainloader.Instance.Plugins` (Unity IL2CPP). The static `Chainloader.PluginInfos` shortcut from BepInEx 5 no longer exists.
+</Note>
+
+## Checking for dependency errors
+
+`DependencyErrors` is populated during `Execute()` with human-readable strings describing every plugin that was skipped and why.
+
+```csharp
+var chainloader = UnityChainloader.Instance;
+chainloader.Finished += () =>
+{
+    if (chainloader.DependencyErrors.Count > 0)
+    {
+        Logger.LogWarning("Some plugins failed to load:");
+        foreach (var error in chainloader.DependencyErrors)
+            Logger.LogWarning($"  {error}");
+    }
+};
+```
+
+<Note>
+`DependencyErrors` only records errors from the current `Execute()` run. Errors from plugins that were already in `Plugins` before `Execute()` was called (e.g., loaded by a preloader patcher) will not appear here.
+</Note>
+
+## Loading plugins from additional directories
+
+The public `LoadPlugins(params string[] pluginsPaths)` overload lets you load plugins from directories outside `BepInEx/plugins/`. This is intended for advanced use cases such as mod managers or meta-plugins that manage their own plugin collections.
+
+```csharp
+// Load plugins from a custom directory in addition to the default location
+var chainloader = UnityChainloader.Instance;
+var loaded = chainloader.LoadPlugins(
+    @"C:\Games\MyGame\BepInEx\plugins",
+    @"C:\Games\MyGame\mods\managed"
+);
+
+Logger.LogInfo($"Loaded {loaded.Count} extra plugins.");
+```
+
+<Note>
+Calling `LoadPlugins` with explicit paths bypasses the default `BepInEx/plugins/` scan. The dependency graph is evaluated only across the plugins passed in that call combined with those already in `Plugins`. It is best to collect all plugin paths up front and pass them in a single call rather than making multiple calls, so that cross-directory dependencies can be resolved correctly.
+</Note>

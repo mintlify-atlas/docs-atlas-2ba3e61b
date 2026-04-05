@@ -1,0 +1,230 @@
+---
+title: "Harmony patching"
+description: "Patch game methods at runtime using HarmonyX, BepInEx's built-in patching library."
+---
+
+## What is HarmonyX?
+
+<Note>
+HarmonyX is BepInEx's maintained fork of the [Harmony](https://github.com/pardeike/Harmony) library. It includes all upstream features and adds extras such as first-class IL2CPP support via `Il2CppInterop.HarmonySupport`, improved transpiler utilities, and tighter integration with BepInEx logging. You do not need to install Harmony separately — HarmonyX is bundled with BepInEx and available via the `HarmonyLib` namespace.
+</Note>
+
+Harmony works by rewriting method bodies at runtime. When you apply a patch, Harmony redirects calls to the target method so that your prefix, postfix, or transpiler runs alongside the original code. This means you can modify game behaviour without replacing or recompiling game assemblies.
+
+## Creating a `Harmony` instance
+
+Each plugin should create its own `Harmony` instance, keyed by the plugin's GUID. Using the GUID as the ID lets you unpatch only your own patches without affecting other plugins.
+
+```csharp
+var harmony = new Harmony("com.example.myplugin");
+```
+
+In a Mono plugin (`BaseUnityPlugin`) the conventional place to create and apply patches is `Awake()`. In an IL2CPP plugin (`BasePlugin`) use `Load()`.
+
+## Applying patches with `PatchAll()`
+
+`harmony.PatchAll()` scans the calling assembly for all classes annotated with `[HarmonyPatch]` and applies every prefix, postfix, and transpiler it finds automatically.
+
+```csharp
+harmony.PatchAll(); // Scans the current assembly
+// or target a specific assembly:
+harmony.PatchAll(typeof(MyPlugin).Assembly);
+```
+
+## Declaring patch classes
+
+Each patch class is decorated with `[HarmonyPatch]` to specify the type and method to target, and one or more patch methods annotated with `[HarmonyPrefix]`, `[HarmonyPostfix]`, or `[HarmonyTranspiler]`.
+
+```csharp
+[HarmonyPatch(typeof(PlayerController), "TakeDamage")]
+internal static class PlayerController_TakeDamage_Patch
+{
+    // Runs before the original method
+    [HarmonyPrefix]
+    private static bool Prefix(PlayerController __instance, ref int amount)
+    {
+        // Halve all incoming damage
+        amount /= 2;
+        // Return true to let the original method run, false to skip it
+        return true;
+    }
+
+    // Runs after the original method
+    [HarmonyPostfix]
+    private static void Postfix(PlayerController __instance, int __result)
+    {
+        // __result contains the return value of the original (if non-void)
+        Log.LogInfo($"TakeDamage finished. Health: {__instance.health}");
+    }
+}
+```
+
+## The three patch types
+
+<AccordionGroup>
+  <Accordion title="HarmonyPrefix — run before the original">
+    A prefix runs before the original method. Return `true` to allow the original to execute; return `false` to skip it entirely.
+
+    ```csharp
+    [HarmonyPrefix]
+    private static bool Prefix(ref int __result)
+    {
+        // Skip the original and return a custom value
+        __result = 42;
+        return false;
+    }
+    ```
+
+    Use a prefix to:
+    - Validate or modify input parameters before the original runs.
+    - Conditionally cancel the original method's execution.
+    - Set a return value when skipping the original.
+  </Accordion>
+
+  <Accordion title="HarmonyPostfix — run after the original">
+    A postfix runs after the original method completes. You can read and modify the return value via the `__result` parameter.
+
+    ```csharp
+    [HarmonyPostfix]
+    private static void Postfix(ref int __result)
+    {
+        // Double the return value
+        __result *= 2;
+    }
+    ```
+
+    Use a postfix to:
+    - Inspect or transform the method's return value.
+    - Trigger side effects after the original logic finishes.
+    - Avoid interference with the original's logic flow.
+  </Accordion>
+
+  <Accordion title="HarmonyTranspiler — modify IL instructions">
+    A transpiler receives the original method's IL instruction stream as `IEnumerable<CodeInstruction>` and returns a modified stream. This is the most powerful but also most fragile patch type.
+
+    ```csharp
+    using System.Collections.Generic;
+    using System.Reflection.Emit;
+    using HarmonyLib;
+
+    [HarmonyTranspiler]
+    private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+    {
+        foreach (var instruction in instructions)
+        {
+            // Replace every `ldc.i4 100` (load constant 100) with `ldc.i4 200`
+            if (instruction.opcode == OpCodes.Ldc_I4 && (int)instruction.operand == 100)
+                yield return new CodeInstruction(OpCodes.Ldc_I4, 200);
+            else
+                yield return instruction;
+        }
+    }
+    ```
+
+    Use a transpiler to:
+    - Modify specific instructions without replacing the entire method.
+    - Insert or remove instructions at precise points.
+    - Apply changes that cannot be expressed as a prefix or postfix.
+  </Accordion>
+</AccordionGroup>
+
+## Special parameters
+
+Harmony injects special values into patch methods based on their parameter names. All special parameters are optional — only declare the ones you need.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `__instance` | `T` (target class) | The object the method was called on. Only available for instance methods. |
+| `__result` | Return type (as `ref` in prefix, value in postfix) | The return value of the original method. |
+| `__originalMethod` | `MethodBase` | The `MethodBase` of the method being patched. |
+| Named parameters | Matching original types | Parameters with the same name as the original method's parameters are injected automatically. |
+
+```csharp
+// Original: public int Heal(int amount, bool overHeal)
+[HarmonyPatch(typeof(PlayerController), "Heal")]
+internal static class Heal_Patch
+{
+    [HarmonyPrefix]
+    private static bool Prefix(
+        PlayerController __instance,  // the PlayerController being healed
+        ref int amount,               // original parameter — modifiable via ref
+        bool overHeal,                // original parameter — read-only
+        MethodBase __originalMethod)  // the MethodBase of Heal()
+    {
+        if (!overHeal && amount > 100)
+            amount = 100;
+        return true;
+    }
+}
+```
+
+## Complete example: prefix and postfix
+
+The following example patches a hypothetical `EnemyAI.CalculateAttackDamage` method. The prefix logs the call and optionally cancels it; the postfix caps the return value.
+
+```csharp
+using BepInEx;
+using BepInEx.Unity.Mono;
+using BepInEx.Logging;
+using HarmonyLib;
+using UnityEngine;
+
+namespace MyPlugin;
+
+[BepInPlugin(MyPlugin.GUID, "My Plugin", "1.0.0")]
+public class MyPlugin : BaseUnityPlugin
+{
+    public const string GUID = "com.example.myplugin";
+    internal static ManualLogSource Log;
+    private Harmony _harmony;
+
+    private void Awake()
+    {
+        Log = Logger;
+        _harmony = new Harmony(GUID);
+        _harmony.PatchAll();
+        Log.LogInfo("Patches applied.");
+    }
+
+    private void OnDestroy()
+    {
+        _harmony.UnpatchSelf();
+        Log.LogInfo("Patches removed.");
+    }
+}
+
+[HarmonyPatch(typeof(EnemyAI), nameof(EnemyAI.CalculateAttackDamage))]
+internal static class EnemyAI_CalculateAttackDamage_Patch
+{
+    [HarmonyPrefix]
+    private static bool Prefix(EnemyAI __instance, float distanceToTarget)
+    {
+        if (__instance.IsDead)
+        {
+            MyPlugin.Log.LogWarning("Dead enemy tried to attack — skipping.");
+            return false; // Skip the original
+        }
+        MyPlugin.Log.LogDebug($"Enemy attacking from {distanceToTarget:F1} units");
+        return true; // Run the original
+    }
+
+    [HarmonyPostfix]
+    private static void Postfix(ref float __result)
+    {
+        const float maxDamage = 50f;
+        if (__result > maxDamage)
+        {
+            MyPlugin.Log.LogDebug($"Capping damage from {__result} to {maxDamage}");
+            __result = maxDamage;
+        }
+    }
+}
+```
+
+## Best practices
+
+- **Use your plugin GUID as the Harmony ID.** This ensures your patches are uniquely identified and can be removed without affecting other plugins' patches.
+- **Patch in `Awake()` (Mono) or `Load()` (IL2CPP).** These are the earliest safe points to apply patches.
+- **Unpatch in `OnDestroy()`.** Call `harmony.UnpatchSelf()` to remove all patches registered under your Harmony instance when the plugin is destroyed. This is especially important for plugins that support hot-reloading.
+- **Keep patches small and focused.** Patches that replace large sections of logic are fragile — they break when the game updates. Prefer postfixes over prefixes that skip the original, and prefer prefixes/postfixes over transpilers when possible.
+- **Test against the original method signature.** Harmony will silently skip patch methods whose parameter types don't match the target. Double-check parameter names and types when a patch appears to have no effect.

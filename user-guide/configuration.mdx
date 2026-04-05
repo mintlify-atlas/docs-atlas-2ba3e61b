@@ -1,0 +1,122 @@
+---
+title: "Configuration"
+description: "Reference for BepInEx.cfg — the global BepInEx configuration file — including disk logging and preloader settings."
+---
+
+BepInEx stores its global configuration in `BepInEx/config/BepInEx.cfg`. The file is created automatically on first run and uses an INI-style format. Each plugin may also create its own config file in the same folder.
+
+## File locations
+
+| File | Purpose |
+|------|---------|
+| `BepInEx/config/BepInEx.cfg` | BepInEx core configuration (logging, preloader behaviour). |
+| `BepInEx/config/<PluginGUID>.cfg` | Per-plugin configuration, created and managed by each plugin. |
+
+<Note>
+  `BepInEx.cfg` is created automatically on first run when the file does not already exist (`saveOnInit: true` is passed to the constructor). Edit it freely; BepInEx reads it on every startup using `ConfigFile.CoreConfig` and will not overwrite your changes.
+</Note>
+
+## Logging.Disk section
+
+Controls how BepInEx writes the `LogOutput.log` file to disk.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `AppendLog` | `false` | When `true`, new log entries are appended to the existing `LogOutput.log` on each game launch instead of overwriting it. |
+| `Enabled` | `true` | Enables or disables disk logging entirely. Set to `false` to stop BepInEx from writing `LogOutput.log`. |
+| `LogLevels` | `Fatal, Error, Warning, Message, Info` | Comma-separated list of log levels written to disk. Valid values: `Fatal`, `Error`, `Warning`, `Message`, `Info`, `Debug`, `All`, `None`. |
+| `InstantFlushing` | `false` | When `true`, every log entry is flushed to disk immediately rather than buffered. Useful for debugging crashes, but causes a significant performance overhead when many messages are logged. |
+| `ConcurrentFileLimit` | `5` | Maximum number of `LogOutput.log` files that can be open simultaneously. Increase this if you debug multiple game instances at the same time. |
+
+Example `BepInEx.cfg` snippet:
+
+```ini
+[Logging.Disk]
+AppendLog = false
+Enabled = true
+LogLevels = Fatal, Error, Warning, Message, Info
+InstantFlushing = false
+ConcurrentFileLimit = 5
+```
+
+<Tip>
+  Enable `InstantFlushing` only when diagnosing a crash. The log file will contain entries up to the exact point of the crash, at the cost of slower overall performance.
+</Tip>
+
+The `Logging.Disk` section also has a Unity-specific key that controls whether Unity's own log messages are included in the disk log:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `WriteUnityLog` | `false` | Include Unity log messages (from `Debug.Log`, etc.) in `LogOutput.log`. Unity log messages are always captured in the console; this controls whether they are also written to disk. |
+
+## Preloader section
+
+Controls assembly-patching behaviour during the preloader phase. These options are primarily for developers writing preloader patchers or debugging games.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `DumpAssemblies` | `false` | When `true`, BepInEx saves each patched assembly to `BepInEx/DumpedAssemblies/<ProcessName>/` after patching. Useful for inspecting what your patchers actually produced. |
+| `LoadDumpedAssemblies` | `false` | When `true`, BepInEx loads assemblies from `BepInEx/DumpedAssemblies/<ProcessName>/` instead of from memory. Allows tools like dnSpy to attach to those assemblies. Setting this to `true` implicitly enables `DumpAssemblies`. |
+| `BreakBeforeLoadAssemblies` | `false` | When `true`, BepInEx calls `Debugger.Break()` just before loading patched assemblies into the CLR. Use this with a managed debugger (e.g., dnSpy) to set breakpoints in patched assemblies before they execute. |
+
+Example `BepInEx.cfg` snippet:
+
+```ini
+[Preloader]
+DumpAssemblies = false
+LoadDumpedAssemblies = false
+BreakBeforeLoadAssemblies = false
+```
+
+<Warning>
+  `BreakBeforeLoadAssemblies` will pause the game process indefinitely if no debugger is attached. Do not ship mods or configurations that enable this option.
+</Warning>
+
+## Logging.Console section
+
+Controls the BepInEx console window that appears when `Enabled` is set (on supported platforms).
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `Enabled` | `false` | Enables the BepInEx console window. On Windows this opens a new `cmd.exe`-style window showing live log output. |
+| `LogLevels` | `Fatal, Error, Warning, Message, Info` | Log levels shown in the console window. Valid values: `Fatal`, `Error`, `Warning`, `Message`, `Info`, `Debug`, `All`, `None`. |
+| `PreventClose` | `false` | If enabled, prevents users from closing the console window (platform-specific implementation). |
+| `ShiftJisEncoding` | `false` | Sets the console encoding to Shift-JIS. Enable for Japanese locale games that output Shift-JIS characters; otherwise leave as UTF-8. |
+
+## Logging section
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `UnityLogListening` | `true` | Forward Unity log messages (`Debug.Log`, `Debug.LogError`, etc.) into the BepInEx logging system. When enabled, Unity logs appear in the console and log file. |
+
+## Caching section
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `EnableAssemblyCache` | `true` | Speeds up plugin and patcher discovery by caching assembly metadata in `BepInEx/cache/`. When enabled, unchanged DLLs are not re-scanned with Mono.Cecil on each launch. Disable if you are developing a plugin and see stale discovery results. |
+
+## Harmony.Logger section
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `LogChannels` | `Warn, Error` | Controls which HarmonyX log channels are forwarded into BepInEx logging. Valid values: `Info`, `Warn`, `Error`, `IL`, `All`, `None`. The `IL` channel produces verbose patch IL dumps and should only be enabled when diagnosing Harmony patching issues. |
+
+## Plugin configuration
+
+Plugins built with BepInEx use the same `ConfigFile` API and write their settings to `BepInEx/config/<PluginGUID>.cfg`. The format is identical to `BepInEx.cfg`:
+
+```ini
+# BepInEx/config/com.example.myplugin.cfg
+
+[General]
+## Whether to enable the feature.
+# Setting type: Boolean
+# Default value: true
+EnableFeature = true
+```
+
+<Note>
+  Plugin config files are created on first run and include inline comments generated from the description passed to `ConfigFile.Bind`. Do not remove these comment blocks — BepInEx uses them to display metadata in config editors.
+</Note>
+
+Each key in a plugin config file is bound by the plugin with a section name, key name, default value, and description. Refer to the plugin's own documentation for the full list of available settings.

@@ -1,0 +1,149 @@
+---
+title: "IL2CPP plugins"
+description: "Write BepInEx plugins for games that use Unity's IL2CPP scripting backend."
+---
+
+## What is IL2CPP?
+
+IL2CPP (Intermediate Language To C++) is Unity's Ahead-of-Time (AOT) compilation backend. Instead of running C# code via the Mono runtime at game launch, Unity compiles all managed code to C++ and then to native machine code before the game ships. The resulting binary is faster and harder to reverse-engineer, but it presents unique challenges for plugin authors:
+
+- **No direct reflection over game types** — the original C# type information is stripped during compilation. Accessing game classes and methods requires going through the IL2CPP type system.
+- **Types accessed via `Il2CppInterop`** — BepInEx generates *interop assemblies* from the game binary using Cpp2IL and Il2CppInterop. These assemblies expose game types as ordinary C# classes you can reference in your plugin.
+- **`MonoBehaviour` lifetime is different** — there is no `Awake()` / `Start()` on the plugin class itself. Instead, `BasePlugin` provides a `Load()` method as the entry point.
+
+## The `BasePlugin` class
+
+IL2CPP plugins inherit from `BepInEx.Unity.IL2CPP.BasePlugin` instead of `BaseUnityPlugin`. The class is not a `MonoBehaviour`, so it has its own lifecycle.
+
+```csharp
+namespace BepInEx.Unity.IL2CPP;
+
+public abstract class BasePlugin
+{
+    public ManualLogSource Log { get; }
+    public ConfigFile Config { get; }
+
+    // Called once when the plugin is loaded. Replaces Awake().
+    public abstract void Load();
+
+    // Called when the plugin is requested to unload.
+    // Return true to signal successful unload; false (default) means not supported.
+    public virtual bool Unload() => false;
+
+    // Adds a component to the BepInEx manager GameObject and registers
+    // the type with the IL2CPP type system if it hasn't been already.
+    public T AddComponent<T>() where T : Il2CppObjectBase
+        => IL2CPPChainloader.AddUnityComponent<T>();
+}
+```
+
+### Key members
+
+| Member | Description |
+|--------|-------------|
+| `Log` | `ManualLogSource` scoped to your plugin's name. |
+| `Config` | `ConfigFile` saved to `BepInEx/config/<guid>.cfg`. |
+| `Load()` | Abstract entry point. Runs once on plugin startup. |
+| `Unload()` | Override and return `true` if your plugin supports hot-unloading. |
+| `AddComponent<T>()` | Adds an IL2CPP-compatible component to the scene. Automatically registers the type with the IL2CPP type system. |
+
+## Plugin attributes
+
+The same attributes used in Mono plugins work identically for IL2CPP plugins:
+
+```csharp
+[BepInPlugin("com.example.myplugin", "My Plugin", "1.0.0")]
+[BepInDependency("com.example.otherplugin", BepInDependency.DependencyFlags.HardDependency)]
+public class MyPlugin : BasePlugin { }
+```
+
+- **`[BepInPlugin(guid, name, version)]`** — required. Registers the plugin with the chainloader.
+- **`[BepInDependency]`** — declares a dependency on another plugin by GUID.
+- **`[BepInIncompatibility]`** — marks a plugin that must not be present.
+
+## NuGet package
+
+Add the IL2CPP target package to your project:
+
+```xml
+<PackageReference Include="BepInEx.Unity.IL2CPP" Version="6.*" />
+```
+
+This pulls in `BepInEx.Core` and the `Il2CppInterop` libraries automatically.
+
+## Minimal complete example
+
+```csharp
+using BepInEx;
+using BepInEx.Unity.IL2CPP;
+using BepInEx.Logging;
+using Il2CppInterop.Runtime.InteropTypes.Arrays;
+using UnityEngine;
+
+namespace MyIL2CPPPlugin;
+
+[BepInPlugin(MyPlugin.GUID, "My IL2CPP Plugin", "1.0.0")]
+public class MyPlugin : BasePlugin
+{
+    public const string GUID = "com.example.myil2cppplugin";
+
+    public override void Load()
+    {
+        Log.LogInfo("MyPlugin loaded!");
+
+        // Read or create a config entry
+        var greeting = Config.Bind("General", "Greeting", "Hello", "Message to log on load.");
+        Log.LogInfo(greeting.Value);
+
+        // Add a persistent MonoBehaviour component
+        AddComponent<MyBehaviour>();
+    }
+
+    public override bool Unload()
+    {
+        Log.LogInfo("MyPlugin unloaded.");
+        return true;
+    }
+}
+
+// Il2CppObjectBase subclass so AddComponent can register it with the IL2CPP type system
+public class MyBehaviour : MonoBehaviour
+{
+    private void Update()
+    {
+        if (Input.GetKeyDown(KeyCode.F1))
+            BepInEx.Logging.Logger.CreateLogSource("MyBehaviour").LogInfo("F1 pressed!");
+    }
+}
+```
+
+<Warning>
+`MonoBehaviour` in IL2CPP interop is **not** the original Unity class. It is a generated wrapper in the interop assemblies. Always reference types from the interop assemblies (e.g., `UnityEngine.MonoBehaviour`) rather than any Mono or .NET equivalent. Casting between IL2CPP wrapper types uses `.Cast<T>()` from `Il2CppInterop.Runtime`, not a C# cast.
+</Warning>
+
+## Using `AddComponent<T>()`
+
+`AddComponent<T>()` registers the component type with IL2CPP's type registry and attaches it to the BepInEx manager `GameObject`. This is necessary because IL2CPP does not know about managed types created after compilation.
+
+```csharp
+public override void Load()
+{
+    // Registers MyTracker with the IL2CPP type system and adds it to the scene
+    var tracker = AddComponent<MyTracker>();
+}
+```
+
+<Warning>
+Only types that inherit from `Il2CppObjectBase` (such as `MonoBehaviour`, `ScriptableObject`, and other Unity object wrappers) can be passed to `AddComponent<T>()`. Passing a plain C# class will cause a compile-time error.
+</Warning>
+
+## Key differences from Mono plugins
+
+| Feature | Mono (`BaseUnityPlugin`) | IL2CPP (`BasePlugin`) |
+|---------|--------------------------|----------------------|
+| Base class | `MonoBehaviour` | Plain class |
+| Entry point | `Awake()` | `Load()` |
+| Unload support | No built-in | `Unload()` returning `true` |
+| Type access | Direct reflection | Via IL2CPP interop assemblies |
+| Add components | `gameObject.AddComponent<T>()` | `AddComponent<T>()` |
+| Unity log events | Forwarded automatically | Forwarded via `IL2CPPUnityLogSource` |
